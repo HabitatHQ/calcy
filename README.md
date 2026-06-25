@@ -208,6 +208,20 @@ The two most useful ways to contribute:
 For accepted bug fixes and small improvements, PRs are welcome; please run
 `pnpm check && pnpm lint && pnpm test` and keep changes focused.
 
+## The name
+
+"calcy" (pronounced *Cal-see*) is what we called the calculator back in college—"hang on,
+let me crunch it in the calcy." This is that calcy: the thing you reach for to work
+something out, quickly.
+
+I trained as a chemical engineer, where a misplaced unit could quietly ruin an answer—and
+it caught me more than once. calcy is unit-aware largely because of that—I'd rather the
+tool keep the units straight than count on getting it right myself.
+
+What I reach for it for now is system-design estimation—capacity, throughput, cost—both in
+interviews and real work, and quick time- and money-calculations where the inputs are rough
+ranges rather than exact figures. Units, rates, and uncertainty, all in one place.
+
 ## License
 
 GPL-3.0—see [`LICENSE`](LICENSE). Third-party notices for adapted code, data, and
