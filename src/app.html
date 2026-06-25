@@ -6,12 +6,6 @@
 		<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
 		<meta name="theme-color" content="#8100ff" />
 
-		<!-- Social-graph preview + base SEO. This is a prerendered SPA (ssr=false),
-		     so the page's <svelte:head> never reaches link crawlers — these static
-		     tags are what Slack/Discord/Twitter/iMessage and search engines read.
-		     The runtime <svelte:head> in +page.svelte still overrides <title> with
-		     the active sheet name once JS runs. Image URLs must be absolute, so
-		     they're pinned to the production origin. -->
 		<title>calcy — unit-aware, uncertainty-propagating calculator</title>
 		<meta
 			name="description"

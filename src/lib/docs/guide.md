@@ -1,6 +1,7 @@
-calcy is a calculator that understands **units** and **uncertainty**. Type plain
-maths and get an answer—and when you're not sure of a number, you can type a
-range and calcy carries that "give or take" all the way through to the result.
+calcy is a calculator that understands **units**, **uncertainty**, and **rates over
+time**. Type plain maths and get an answer—and when you're not sure of a number, you
+can type a range and calcy carries that "give or take" all the way through to the
+result.
 
 ### Start typing
 
@@ -66,6 +67,29 @@ chance(revenue > $5000)     # how likely is a $5,000 day?
 mean(revenue)               # the average
 median(visitors)            # the middle value
 ```
+
+### Rates over time
+
+A value measured *per unit of time*—`12k req/s`, `$200/day`, `30 MB/s`—is a **rate**.
+calcy recognises it and shows the same speed at every scale (per second, minute,
+hour … year), so you never have to convert in your head. Use `in` to pick a time base:
+
+```
+12k req/s              # → 12K req/s
+12k req/s in req/day   # → 1.04B req/day
+```
+
+Multiply a rate by a length of time and the "per time" cancels out, leaving a plain
+total—calcy calls this **accumulating**, and it works even when the rate is uncertain:
+
+```
+12k req/s * 30 day            # → 31.1B req
+(2 to 5) MB/s * 1 day in TB   # uncertain rate, totalled over a day
+```
+
+Every rate also gets a **Rate Card** beside your sheet, with an **Accumulate over**
+control (and an optional growth rate), so you can roll a rate up over any window
+without typing the multiplication yourself.
 
 ### Money
 

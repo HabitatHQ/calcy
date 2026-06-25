@@ -19,6 +19,14 @@ after install.
 
 ![calcy — a project estimate with uncertain tasks rolled up into a total](docs/screenshot.png)
 
+## Status
+
+calcy is **mostly feature-complete and mostly feature-stable**. The engine and UI do
+what they set out to do, and I don't expect to add major features or make
+breaking changes—though I might if I run into a compelling use-case. Micro-features, polish, and bug fixes
+are still very welcome. See [Contributing](#contributing) for how to report a bug or
+propose a feature.
+
 ## The one idea behind it
 
 > **Every value is a _distribution_ of a _dimensioned quantity_.**
@@ -183,6 +191,22 @@ If calcy isn't your fit, these are excellent—and worth learning from:
   Monte-Carlo estimates.
 - **[Squiggle](https://www.squiggle-language.com/)**—a language for probability
   distributions.
+
+## Contributing
+
+calcy is a small, single-maintainer project, and it's [mostly feature-stable](#status).
+The two most useful ways to contribute:
+
+- **Found a bug?** [Open an issue](https://github.com/npalladium/calcy/issues/new/choose).
+  There's a bug-report template, and the in-app footer can prefill one with your sheet
+  attached.
+- **Want a feature?** [Start a discussion](https://github.com/npalladium/calcy/discussions)
+  rather than opening a PR straight away. Because the project is feature-stable,
+  let's talk through the idea and whether it fits before any code—it saves wasted effort
+  on both sides.
+
+For accepted bug fixes and small improvements, PRs are welcome; please run
+`pnpm check && pnpm lint && pnpm test` and keep changes focused.
 
 ## License
 
