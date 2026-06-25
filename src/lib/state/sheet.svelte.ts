@@ -426,8 +426,14 @@ export class SheetController {
 		setTimeout(() => (this.copied = false), 1200);
 	}
 
+	// A shareable URL with the whole sheet packed into the hash. Pure read of the
+	// current sheet + location; safe to call from any view (e.g. the bug report).
+	shareUrl(): string {
+		return `${location.origin}${location.pathname}#${encodeShare({ title: this.title, body: this.body, seed: this.seed })}`;
+	}
+
 	async shareLink() {
-		const url = `${location.origin}${location.pathname}#${encodeShare({ title: this.title, body: this.body, seed: this.seed })}`;
+		const url = this.shareUrl();
 		await navigator.clipboard.writeText(url);
 		this.shared = true;
 		setTimeout(() => (this.shared = false), 1400);

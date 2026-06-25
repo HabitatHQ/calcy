@@ -1,0 +1,44 @@
+name: Bug report
+description: Report something that's broken or wrong in calcy
+title: "[Bug]: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting a bug! calcy runs entirely in your browser, so the
+        fastest way for us to reproduce is a **share link** — the **Share** button
+        copies your whole sheet into a URL.
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: What went wrong, and what did you expect instead?
+      placeholder: "I typed `5 km in mi` and expected …, but got …"
+    validations:
+      required: true
+  - type: input
+    id: share-link
+    attributes:
+      label: Share link or expression
+      description: Paste a Share link, or the expression(s) that trigger the bug.
+      placeholder: "https://npalladium.github.io/calcy/#…  — or  `5 km to mi`"
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Open the sheet above
+        2. …
+        3. …
+  - type: input
+    id: environment
+    attributes:
+      label: Browser & OS
+      placeholder: "Chrome 126 on macOS 14"
+  - type: textarea
+    id: console
+    attributes:
+      label: Console errors (optional)
+      description: Anything logged in the browser devtools console.
+      render: shell
