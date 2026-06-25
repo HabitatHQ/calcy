@@ -36,30 +36,52 @@ let {
 	onrighttoggle?: () => void;
 } = $props();
 
+// The chevrons sit on top of the splitter, so we can't let them swallow the
+// drag. Instead every press starts a potential drag; we distinguish a *click*
+// (no movement → toggle the adjacent column) from a *drag* (moved past the
+// threshold → resize). This keeps the whole splitter draggable, chevrons and
+// all, while a tap on a chevron still collapses/expands.
+const DRAG_THRESHOLD = 3; // px before a press counts as a drag, not a click
+
 let dragging = $state(false);
+let moved = false;
+let downX = 0;
 let lastX = 0;
+let pendingToggle: (() => void) | undefined;
 
 function onPointerDown(e: PointerEvent) {
-	// A pointerdown on a chevron must not start a drag: capturing the pointer
-	// here retargets the follow-up `click` to the splitter, so the button's
-	// onclick (the collapse toggle) would never fire. Let it through.
-	if ((e.target as HTMLElement).closest('.chevron')) return;
+	const chevron = (e.target as HTMLElement).closest('.chevron');
+	pendingToggle = chevron
+		? chevron.classList.contains('left')
+			? onlefttoggle
+			: onrighttoggle
+		: undefined;
 	dragging = true;
-	lastX = e.clientX;
+	moved = false;
+	downX = lastX = e.clientX;
 	(e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
 	e.preventDefault();
 }
 function onPointerMove(e: PointerEvent) {
 	if (!dragging) return;
+	if (Math.abs(e.clientX - downX) > DRAG_THRESHOLD) moved = true;
 	const dx = e.clientX - lastX;
 	lastX = e.clientX;
-	onresize(dx);
+	if (moved) onresize(dx);
 }
 function onPointerUp(e: PointerEvent) {
 	if (!dragging) return;
 	dragging = false;
 	(e.currentTarget as HTMLElement).releasePointerCapture?.(e.pointerId);
-	onresizeend?.();
+	if (moved) onresizeend?.();
+	else pendingToggle?.(); // a press that didn't move is a click on a chevron
+	pendingToggle = undefined;
+}
+function onPointerCancel(e: PointerEvent) {
+	if (!dragging) return;
+	dragging = false;
+	(e.currentTarget as HTMLElement).releasePointerCapture?.(e.pointerId);
+	pendingToggle = undefined; // cancelled gesture: neither resize nor toggle
 }
 function onKey(e: KeyboardEvent) {
 	const step = e.shiftKey ? 32 : 8;
@@ -72,10 +94,6 @@ function onKey(e: KeyboardEvent) {
 		onresize(step);
 		onresizeend?.();
 	}
-}
-function chevronClick(e: MouseEvent, fn?: () => void) {
-	e.stopPropagation(); // don't also start a drag
-	if (fn) fn();
 }
 </script>
 
@@ -92,7 +110,7 @@ function chevronClick(e: MouseEvent, fn?: () => void) {
 	onpointerdown={onPointerDown}
 	onpointermove={onPointerMove}
 	onpointerup={onPointerUp}
-	onpointercancel={onPointerUp}
+	onpointercancel={onPointerCancel}
 	onkeydown={onKey}
 >
 	{#if collapsible && onlefttoggle}
@@ -102,7 +120,6 @@ function chevronClick(e: MouseEvent, fn?: () => void) {
 			class:visible={leftCollapsed}
 			aria-label={leftCollapsed ? 'expand left column' : 'collapse left column'}
 			tabindex="-1"
-			onclick={(e) => chevronClick(e, onlefttoggle)}
 		>‹</button>
 	{/if}
 	{#if collapsible && onrighttoggle}
@@ -112,7 +129,6 @@ function chevronClick(e: MouseEvent, fn?: () => void) {
 			class:visible={rightCollapsed}
 			aria-label={rightCollapsed ? 'expand right column' : 'collapse right column'}
 			tabindex="-1"
-			onclick={(e) => chevronClick(e, onrighttoggle)}
 		>›</button>
 	{/if}
 </div>

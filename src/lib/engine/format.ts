@@ -132,10 +132,15 @@ export interface DisplayValue {
 	unit: string;
 	// point
 	value?: string;
-	// dist
+	// dist: raw, machine-parseable percentiles (Number()/clipboard/share rely on
+	// these staying full-precision).
 	p5?: string;
 	p50?: string;
 	p95?: string;
+	// dist: human-facing stats for the inspector, each scaled into the display
+	// unit and formatted per the number-format setting. Labels: mean, std dev,
+	// min, p5, p25, median, p75, p95, max. The unit label is appended by the UI.
+	stats?: { label: string; value: string }[];
 	text: string; // combined one-line label
 	// Active confidence level (the quantile range [pLower, pUpper] that
 	// the user picked via the sheet's `confidence` setting or a `ci(...)` call).
@@ -222,12 +227,30 @@ export function formatSummary(
 	const text = sym
 		? `${formatMoney(scaled(d.p50, pinned), sym)} (${formatMoney(scaled(d.p5, pinned), sym)} … ${formatMoney(scaled(d.p95, pinned), sym)})`
 		: `${fp50} (${fp5} … ${fp95})${suffix}`;
+	// Per-stat figures for the inspector, in the display unit. Percentiles, mean,
+	// min and max are absolute values, so they go through the full scaling
+	// (including any affine offset / log). Std dev is a *spread*, so it scales by
+	// the factor only — never the offset — and isn't meaningful under a log unit,
+	// where we leave it in base units.
+	const fmtSpread = (n: number) => formatNumber(pinned?.log ? n : n / (pinned?.factor ?? 1), fmt);
+	const stats = [
+		{ label: 'mean', value: tfmt(d.mean) },
+		{ label: 'std dev', value: fmtSpread(d.sd) },
+		{ label: 'min', value: tfmt(d.min) },
+		{ label: 'p5', value: fp5 },
+		{ label: 'p25', value: tfmt(d.p25) },
+		{ label: 'median', value: fp50 },
+		{ label: 'p75', value: tfmt(d.p75) },
+		{ label: 'p95', value: fp95 },
+		{ label: 'max', value: tfmt(d.max) }
+	];
 	return {
 		kind: 'dist',
 		unit,
 		p5,
 		p50,
 		p95,
+		stats,
 		text,
 		level
 	};

@@ -1,40 +1,26 @@
 <script lang="ts">
 import type { LineResult, NumberFormat } from '$lib/engine';
-import { formatNumber } from '$lib/engine/format';
 import Sparkline from './Sparkline.svelte';
 
-let { line, fmt = 'auto' }: { line: LineResult; fmt?: NumberFormat } = $props();
+// fmt is kept in the prop list for API compatibility; the figures are already
+// formatted (and scaled into the display unit) by the engine in line.display.
+let { line, fmt: _fmt = 'auto' }: { line: LineResult; fmt?: NumberFormat } = $props();
 
 const dist = $derived(line.summary?.kind === 'dist' ? line.summary : null);
 const unit = $derived(line.display?.unit ?? '');
+const withUnit = (v?: string) => `${v ?? ''}${unit ? ` ${unit}` : ''}`;
 
-const stats = $derived(
-	dist
-		? ([
-				['mean', dist.mean],
-				['std dev', dist.sd],
-				['min', dist.min],
-				['p5', dist.p5],
-				['p25', dist.p25],
-				['median', dist.p50],
-				['p75', dist.p75],
-				['p95', dist.p95],
-				['max', dist.max]
-			] as [string, number][])
-		: []
-);
-
-const cell = (n: number) => `${formatNumber(n, fmt)}${unit ? ` ${unit}` : ''}`;
+// Pre-formatted, display-unit stats from the engine (mean, std dev, …, median, …).
+const stats = $derived(line.display?.stats ?? []);
+const stat = (label: string) => stats.find((s) => s.label === label)?.value;
 </script>
 
 {#if dist}
 	<div class="dist">
 		{#if line.display?.kind === 'dist'}
 			<p class="plain">
-				Most likely <strong>{line.display?.p50}{unit ? ` ${unit}` : ''}</strong>—usually between
-				<strong>{line.display?.p5}</strong> and <strong>{line.display?.p95}</strong>{unit
-					? ` ${unit}`
-					: ''}.
+				Most likely <strong>{withUnit(stat('median'))}</strong>—usually between
+				<strong>{stat('p5')}</strong> and <strong>{withUnit(stat('p95'))}</strong>.
 			</p>
 		{:else}
 			<!-- A distribution that collapsed to a single value (e.g. x − x): no
@@ -49,10 +35,10 @@ const cell = (n: number) => `${formatNumber(n, fmt)}${unit ? ` ${unit}` : ''}`;
 			<summary>All statistics</summary>
 			<table>
 				<tbody>
-					{#each stats as [name, value] (name)}
-						<tr class:hl={name === 'median'}>
-							<th>{name}</th>
-							<td>{cell(value)}</td>
+					{#each stats as { label, value } (label)}
+						<tr class:hl={label === 'median'}>
+							<th>{label}</th>
+							<td>{withUnit(value)}</td>
 						</tr>
 					{/each}
 				</tbody>

@@ -69,4 +69,16 @@ describe('display unit follows the unit you typed', () => {
 	it('explicit in/to conversion still wins', () => {
 		expect(unit('5 km in mi')).toBe('mi');
 	});
+
+	it('inspector stats are formatted and scaled, not raw floats', () => {
+		// Regression: the distribution panel showed median/p5/p95 as full-precision
+		// base-unit floats (e.g. "2.8374996102079937 day"). They must be formatted
+		// and in the displayed unit (days, not seconds).
+		const d = one('two days to four days', AUTO).display;
+		const median = d?.stats?.find((s) => s.label === 'median')?.value;
+		expect(median, 'median stat present').toBeDefined();
+		expect(median ?? '', 'no full-precision float').not.toMatch(/\d\.\d{5,}/);
+		expect(Number(median)).toBeGreaterThan(2);
+		expect(Number(median)).toBeLessThan(4); // days, not ~244000 seconds
+	});
 });
