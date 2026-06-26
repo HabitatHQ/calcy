@@ -12,24 +12,29 @@ export interface Template {
 export const TEMPLATES: Template[] = [
 	{
 		title: 'Start here',
-		blurb: 'learn calcy in a few lines',
-		body: `# 👋 Start here — calcy in a few lines.
+		blurb: 'learn calcy through one 10K run',
+		body: `# 👋 Start here—learn calcy through a single 10K run.
 # Edit anything; each line's answer lands on the right.
 
-# 1 · Plain math, but units are part of it:
-groceries = $80 + $35
+# Units are part of the math. Name a value once, reuse it below:
+distance = 10 km
 
-# 2 · Name things, then reuse them on later lines:
-weeks   = 4
-monthly = groceries * weeks
+# Rates carry a "per" unit. You know it's an easy pace but not the
+# exact number, so type a range with "to"—calcy carries that
+# uncertainty through every line that depends on it:
+pace = (5 to 6) min/km
 
-# 3 · Unsure of a number? Type a range with "to" and calcy
-#     carries the uncertainty all the way through:
-visitors = 800 to 1200        # a 90% range, not one guess
-revenue  = visitors * $4.50   # the range flows into the result
+# Multiply distance by pace to get time; "in" converts the units:
+time = distance * pace in min
 
-# 4 · Ask a question about an uncertain result:
-chance(revenue > $4500)       # the odds, given your range`
+# Reuse names freely—distance and time give an average speed:
+speed = distance / time in km/h
+
+# Another rate, over time: burning 600 kcal for each hour you run:
+burn = 600 kcal/h * time in kcal
+
+# Ask a question about an uncertain result and read the odds:
+chance(time < 55 min)`
 	},
 	{
 		title: 'Project estimate',
