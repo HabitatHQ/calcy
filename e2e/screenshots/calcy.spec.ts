@@ -93,7 +93,8 @@ test.describe('calcy screenshots', () => {
 
 	test('templates — toolbar panel', async ({ page }) => {
 		await loadSheet(page, '5 km + 3 mi'); // a non-empty sheet
-		await page.getByRole('button', { name: 'Examples' }).click();
+		await page.getByRole('button', { name: 'Sheets' }).click();
+		await page.getByRole('menuitem', { name: 'Start from an example' }).click();
 		// The toolbar Examples panel is a FloatingPanel (.float); its entries are
 		// EntryList buttons (.open).
 		await expect(page.locator('.float .open')).toHaveCount(9);

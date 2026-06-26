@@ -69,7 +69,8 @@ test.describe('UI walkthrough', () => {
 
 	test('05 examples panel', async ({ page }) => {
 		await loadSheet(page, '5 km + 3 mi');
-		await page.getByRole('button', { name: 'Examples' }).click();
+		await page.getByRole('button', { name: 'Sheets' }).click();
+		await page.getByRole('menuitem', { name: 'Start from an example' }).click();
 		await page.locator('.float').first().waitFor({ state: 'visible' });
 		await page.waitForTimeout(300);
 		await shot(page, '05-examples');
@@ -78,13 +79,15 @@ test.describe('UI walkthrough', () => {
 	test('06 sheets panel', async ({ page }) => {
 		await loadSheet(page, ESTIMATE);
 		await page.getByRole('button', { name: 'Sheets' }).click();
+		await page.getByRole('menuitem', { name: 'Browse sheets' }).click();
 		await page.waitForTimeout(300);
 		await shot(page, '06-sheets');
 	});
 
 	test('07 history panel', async ({ page }) => {
 		await loadSheet(page, ESTIMATE);
-		await page.getByRole('button', { name: 'History' }).click();
+		await page.getByRole('button', { name: 'Sheets' }).click();
+		await page.getByRole('menuitem', { name: 'Revision history' }).click();
 		await page.waitForTimeout(300);
 		await shot(page, '07-history');
 	});

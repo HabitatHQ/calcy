@@ -14,18 +14,11 @@ const NUMBER_FORMATS: { value: NumberFormat; label: string; hint: string }[] = [
 	{ value: 'scientific', label: '1e9', hint: 'scientific notation' }
 ];
 
-let importInput = $state<HTMLInputElement>();
-
 // The calendar conventions are precise fractions (a Gregorian month is
 // 365.2425/12 = 30.436875 days), which read as noise in the input. Trim the
 // *display* to a few decimals; the stored value keeps full precision until the
 // user actually edits it.
 const trim = (n: number) => +n.toFixed(4);
-
-function onImport(e: Event) {
-	const file = (e.target as HTMLInputElement).files?.[0];
-	if (file) c.importDb(file);
-}
 </script>
 
 <section class="panel settings" aria-label="settings">
@@ -53,18 +46,6 @@ function onImport(e: Event) {
 		{#each NUMBER_FORMATS as f (f.value)}
 			<button type="button" class:active={c.numberFormat === f.value} title={f.hint} onclick={() => c.setNumberFormat(f.value)}>{f.label}</button>
 		{/each}
-	</div>
-
-	<span class="divider" aria-hidden="true"></span>
-
-	<div class="grp" role="group" aria-label="export and import">
-		<span class="grp-label">data</span>
-		<button type="button" onclick={() => c.exportTxt()}>.txt</button>
-		<button type="button" onclick={() => c.exportMd()}>.md</button>
-		<button type="button" onclick={() => c.exportCsv()}>.csv</button>
-		<button type="button" onclick={() => c.exportDb()}>.sqlite</button>
-		<button type="button" onclick={() => importInput?.click()}>Import .sqlite</button>
-		<input bind:this={importInput} type="file" accept=".sqlite" onchange={onImport} hidden />
 	</div>
 
 	<span class="divider" aria-hidden="true"></span>

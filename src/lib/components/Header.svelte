@@ -3,12 +3,25 @@
 // button forwards an intent to it.
 //
 // Controls are grouped into clusters separated by hairline dividers — a
-// segmented mode toggle, sheet navigation, output actions, and icon-only
-// utilities — so the bar reads as four small toolbars instead of one wall of
-// identical pills.
+// segmented mode toggle, a Sheets menu, a Copy/export menu plus re-roll, and
+// icon-only utilities — so the bar reads as a few small toolbars instead of one
+// wall of identical pills.
 import type { SheetController } from '$lib/state/sheet.svelte';
+import Menu from './Menu.svelte';
 
 let { c }: { c: SheetController } = $props();
+
+// The Copy trigger doubles as transient confirmation: a successful copy/share
+// flips the label for ~1.2s (controller-driven) so the feedback survives the
+// menu closing.
+const copyLabel = $derived(c.copied ? '✓ Copied' : c.shared ? '✓ Link' : 'Copy');
+
+// Hidden file input for "Import .sqlite"; the menu item just clicks it.
+let importInput = $state<HTMLInputElement>();
+function onImport(e: Event) {
+	const file = (e.target as HTMLInputElement).files?.[0];
+	if (file) c.importDb(file);
+}
 </script>
 
 <header>
@@ -24,17 +37,34 @@ let { c }: { c: SheetController } = $props();
 	<span class="divider" aria-hidden="true"></span>
 
 	<div class="group" aria-label="sheets">
-		<button onclick={() => c.newSheet()}>New</button>
-		<button class:active={c.showTemplates} onclick={() => c.toggleTemplates()} title="Start from an example">Examples</button>
-		<button class:active={c.showSheets} onclick={() => c.toggleSheets()} title="Browse & search sheets (⌘K)">Sheets</button>
-		<button class:active={c.showHistory} onclick={() => c.openHistory()} title="Revision history of this sheet">History</button>
+		<Menu label="Sheets" title="Sheets" active={c.showTemplates || c.showSheets || c.showHistory}>
+			{#snippet children({ close })}
+				<button role="menuitem" onclick={() => { c.newSheet(); close(); }}>New sheet</button>
+				<div role="separator"></div>
+				<button role="menuitem" onclick={() => { c.toggleTemplates(); close(); }}>Start from an example…</button>
+				<button role="menuitem" onclick={() => { c.toggleSheets(); close(); }}>Browse sheets…<span class="hint">⌘K</span></button>
+				<button role="menuitem" onclick={() => { c.openHistory(); close(); }}>Revision history…</button>
+			{/snippet}
+		</Menu>
 	</div>
 
 	<span class="divider" aria-hidden="true"></span>
 
-	<div class="group" aria-label="share & recompute">
-		<button class:active={c.copied} onclick={() => c.copySheet()} title="Copy sheet + results to clipboard">{c.copied ? '✓ Copied' : 'Copy'}</button>
-		<button class:active={c.shared} onclick={() => c.shareLink()} title="Copy a shareable link (sheet packed into the URL)">{c.shared ? '✓ Link' : 'Share'}</button>
+	<div class="group" aria-label="copy, export & recompute">
+		<Menu label={copyLabel} title="Copy & export" active={c.copied || c.shared}>
+			{#snippet children({ close })}
+				<button role="menuitem" onclick={() => { c.copySheet(); close(); }}>Copy sheet + results</button>
+				<button role="menuitem" onclick={() => { c.shareLink(); close(); }}>Copy share link</button>
+				<div role="separator"></div>
+				<button role="menuitem" onclick={() => { c.exportTxt(); close(); }}>Download<span class="hint">.txt</span></button>
+				<button role="menuitem" onclick={() => { c.exportMd(); close(); }}>Download<span class="hint">.md</span></button>
+				<button role="menuitem" onclick={() => { c.exportCsv(); close(); }}>Download<span class="hint">.csv</span></button>
+				<div role="separator"></div>
+				<button role="menuitem" onclick={() => { c.exportDb(); close(); }}>Export database<span class="hint">.sqlite</span></button>
+				<button role="menuitem" onclick={() => { importInput?.click(); close(); }}>Import database…<span class="hint">.sqlite</span></button>
+			{/snippet}
+		</Menu>
+		<input bind:this={importInput} type="file" accept=".sqlite" onchange={onImport} hidden />
 		<button class="icon" class:pulse={c.rerolled} onclick={() => c.reroll()} title="Resample with a new seed (⌘↵)" aria-label="re-roll">↻</button>
 	</div>
 
