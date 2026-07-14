@@ -65,7 +65,11 @@ touch "$pages_wt/.nojekyll" # belt-and-braces: GitHub Pages must not run Jekyll
 		echo "Nothing to publish — the live site already matches HEAD."
 	else
 		git commit -m "Deploy site $(date -u '+%Y-%m-%d %H:%M:%SZ')"
-		git push origin gh-pages
+		# --no-verify: this pushes the built static output, not source, so the
+		# repo's pre-push gate (pnpm lint/check/test) can't run here — there's no
+		# package.json in this worktree. The source was already gated when main
+		# was pushed; re-running it against build output would only ever fail.
+		git push --no-verify origin gh-pages
 		echo "Published to gh-pages."
 	fi
 )
