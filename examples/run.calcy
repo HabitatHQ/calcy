@@ -1,0 +1,7 @@
+# A sample calcy workbook — run it with `pnpm cli examples/run.calcy`.
+distance = 10 km
+pace = (5 to 6) min/km
+time = distance * pace in min
+speed = distance / time in km/h
+chance(time < 55 min)
+oops = distance +

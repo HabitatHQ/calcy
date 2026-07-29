@@ -12,7 +12,13 @@ pnpm build        # static build → build/
 pnpm test         # vitest (unit / property / golden)
 pnpm lint         # biome
 pnpm check        # svelte-check (types)
+pnpm cli <file>   # evaluate a workbook file from the terminal (src/cli/, tsx)
 ```
+
+The CLI (`src/cli/`) is a thin Node front-end over the same `Engine`, run via
+`tsx` — a second consumer of the framework-agnostic engine alongside the SPA.
+It imports engine/export modules by relative path (not the `$lib` alias) so
+`tsx` resolves them without Vite.
 
 Run the full suite and lint/check before committing; only commit when green.
 

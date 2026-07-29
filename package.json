@@ -3,7 +3,11 @@
   "version": "2026.06.26",
   "private": true,
   "type": "module",
+  "bin": {
+    "calcy": "./src/cli/index.ts"
+  },
   "scripts": {
+    "cli": "tsx src/cli/index.ts",
     "dev": "vite dev",
     "prebuild": "tsx scripts/gen-reference.ts",
     "build": "vite build",
@@ -74,6 +78,9 @@
     "@codemirror/view": "^6.43.1",
     "@lezer/highlight": "^1.2.3",
     "@sqlite.org/sqlite-wasm": "3.53.0-build1",
-    "simple-statistics": "^7.9.0"
+    "@stricli/core": "^1.3.0",
+    "markdown-table": "^3.0.4",
+    "simple-statistics": "^7.9.0",
+    "table": "^6.9.0"
   }
 }

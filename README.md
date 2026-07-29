@@ -72,6 +72,24 @@ pnpm test         # vitest (unit, property, golden)
 pnpm mutation     # stryker mutation testing
 ```
 
+## Command line
+
+The same engine also runs a whole text file as a workbook from the terminal,
+one result per line—no browser needed:
+
+```sh
+pnpm cli path/to/sheet.calcy            # boxed table on a TTY, Markdown when piped
+pnpm cli sheet.calcy --format csv       # also: md, table, json
+cat sheet.calcy | pnpm cli - -f md      # read stdin with "-"
+pnpm cli sheet.calcy -o results.md      # write to a file
+```
+
+Every evaluated line becomes a row (`line, name, expression, result, kind, note`);
+a line that fails to evaluate shows `kind = error` with the message in `note`.
+Flags: `-f/--format`, `-o/--output`, `-N/--samples`, `-s/--seed`,
+`-c/--confidence`, `--number-format`. See `pnpm cli --help`. There's a runnable
+sample at [`examples/run.calcy`](examples/run.calcy).
+
 ## Docs
 
 The prose docs live under [`src/lib/docs/`](src/lib/docs/) as Markdown, so they
