@@ -35,10 +35,16 @@ function csvCell(s: string): string {
   return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
 }
 
-// One row per evaluated line (values + unit defs), mirroring the results grid.
-export function toCsv(results: LineResult[]): string {
-  const header = ['line', 'name', 'expression', 'result', 'kind', 'note'];
-  const rows = results
+// Column headings for the tabular result export, shared by every renderer
+// (CSV here; Markdown / terminal tables in the CLI).
+export const RESULT_HEADER = ['line', 'name', 'expression', 'result', 'kind', 'note'] as const;
+
+// One string[] row per evaluated line (values + unit defs), mirroring the
+// results grid. The single source of truth for tabular exports: `toCsv` and the
+// CLI's Markdown/terminal renderers all build on these rows so their columns
+// never drift apart.
+export function resultRows(results: LineResult[]): string[][] {
+  return results
     .filter((l) => l.kind === 'value' || l.kind === 'unitdef')
     .map((l) => [
       String(l.index + 1),
@@ -48,7 +54,13 @@ export function toCsv(results: LineResult[]): string {
       l.error ? 'error' : l.isDist ? 'dist' : l.isRate ? 'rate' : (l.display?.kind ?? ''),
       l.error ?? l.comment ?? ''
     ]);
-  return [header, ...rows].map((r) => r.map(csvCell).join(',')).join('\r\n');
+}
+
+// One row per evaluated line (values + unit defs), mirroring the results grid.
+export function toCsv(results: LineResult[]): string {
+  return [[...RESULT_HEADER], ...resultRows(results)]
+    .map((r) => r.map(csvCell).join(','))
+    .join('\r\n');
 }
 
 // Markdown wrapper around an already-annotated body.
