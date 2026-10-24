@@ -138,6 +138,8 @@ export class Engine {
     if (line.type !== 'expr') throw new Error('unit definition must be an expression');
     const v = evalRoot(line.expr, ctx).value;
     if (v.scalar == null) throw new Error('unit definition must be deterministic');
+    if (!Number.isFinite(v.scalar) || v.scalar === 0)
+      throw new Error('unit definition scale must be finite and non-zero');
     this.units.set(name, { dim: v.dim, scale: v.scalar });
     this.customUnits.set(name, definition);
   }
@@ -422,7 +424,7 @@ export class Engine {
             `scenario row '${name}' has ${tokens.length} cell(s) but the axis has ${coords.length} coord(s)`
           );
         const unit = tokens.length > coords.length ? tokens[coords.length] : '';
-        const parts = coords.map((c, k) => `${c}: ${tokens[k]}${unit ? ` ${unit}` : ''}`);
+        const parts = coords.map((c, k) => `${c}: (${tokens[k]})${unit ? ` ${unit}` : ''}`);
         const src = `${name} = scenario[${axis}](${parts.join(', ')})`;
         const line = parseLine(src, { isUnit: (n) => this.units.has(n) });
         if (line.type !== 'assign') throw new Error('scenario row did not parse as an assignment');

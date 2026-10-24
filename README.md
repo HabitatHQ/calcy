@@ -86,6 +86,8 @@ pnpm cli sheet.calcy -o results.md      # write to a file
 
 Every evaluated line becomes a row (`line, name, expression, result, kind, note`);
 a line that fails to evaluate shows `kind = error` with the message in `note`.
+Markdown output keeps expressions and comments literal, including pipes,
+backslashes, backticks, and inline markup.
 Flags: `-f/--format`, `-o/--output`, `-N/--samples`, `-s/--seed`,
 `-c/--confidence`, `--number-format`. See `pnpm cli --help`. There's a runnable
 sample at [`examples/run.calcy`](examples/run.calcy).
@@ -108,6 +110,8 @@ The in-app cheat sheet (`⌘/`) has click-to-insert examples for every feature.
 - **Notepad** (default on desktop)—code editor + result gutter, per-line copy.
 - **Tape** (touch-friendly)—a running value with stacked operation rows;
   compiles to the same expression the engine evaluates.
+  Tape uses a separate evaluation worker with the same settings, so it does not
+  replace the Notepad inspector's calculation state.
 - **Rate Card**—auto-shown for rates; time-base table + accumulation + growth.
 - **Sensitivity**—which input drives the most output variance.
 - **Sheets**—create / duplicate / rename / search (`⌘K`); auto-persisted.
@@ -198,6 +202,21 @@ e.g. unit-conversion round-trips and distribution invariants), and **golden
 tests** that pin worked examples (see the [Reference](src/lib/docs/reference.md)).
 `pnpm mutation` runs Stryker to check the suite actually catches regressions. New
 behaviour should add golden tests in the spec style.
+
+## Calculation boundaries and backups
+
+- Unary math functions and sample reducers take one value. On a scenario they
+  operate within each labelled cell; use `over <axis>` to collapse an axis.
+  `sum` remains variadic and aligns or crosses scenario axes like `+`.
+- Scenario tables apply a shared trailing unit to each entire cell expression.
+  Multi-axis output identifies every coordinate rather than using flat indexes.
+- Numeric literals must be complete; malformed decimal/exponent forms are errors.
+  Custom-unit scales must be finite and nonzero.
+- Ranges require finite bounds and a positive finite step, are capped at
+  1,000,000 entries, and reject steps that cannot advance at the chosen magnitude.
+- SQLite export saves pending edits before downloading the database and stops if
+  that save fails. A rejected SQLite import reports an error and restores the
+  previous database so it remains available for subsequent saves.
 
 ## Privacy
 

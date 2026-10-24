@@ -7,9 +7,10 @@ import { num, one, values } from './helpers';
 // scalar/distribution cell.
 
 const scenarioOf = (src: string): ScenarioSummary => {
-  const l = one(src);
-  if (l.error) throw new Error(`${src} → ${l.error}`);
-  if (l.summary?.kind !== 'scenario') throw new Error(`expected scenario for: ${src}`);
+  const results = values(src);
+  const l = results[results.length - 1];
+  if (l?.error) throw new Error(`${src} → ${l.error}`);
+  if (l?.summary?.kind !== 'scenario') throw new Error(`expected scenario for: ${src}`);
   return l.summary;
 };
 
@@ -179,6 +180,56 @@ describe('pick(scenario, axis = "coord")', () => {
   });
 });
 
+describe('scenario wrappers in ordinary functions and sums', () => {
+  it('maps reducers and unary math per cell without collapsing axes', () => {
+    expect(cellValues('mean(scenario[case](low: 1, high: 2))')).toEqual([1, 2]);
+    expect(cellValues('sqrt(scenario[case](low: 4, high: 9))')).toEqual([2, 3]);
+  });
+
+  it('reduces samples inside each cell while retaining its coordinates', () => {
+    const normalCells = 'scenario(low: normal(10, 1), high: normal(20, 2))';
+    expect(cellValues(`mean(${normalCells})`)).toEqual([10, 20]);
+    expect(cellValues(`p(${normalCells}, 0.5)`)).toEqual([10, 20]);
+    expect(cellValues('chance(scenario(low: -1, high: 1) > 0)')).toEqual([0, 1]);
+    const bands = scenarioOf('interval(scenario(low: 1, high: 2), 0.9)');
+    expect(bands.cells).toEqual([
+      { kind: 'list', dim: {}, list: [1, 1] },
+      { kind: 'list', dim: {}, list: [2, 2] }
+    ]);
+  });
+
+  it('broadcasts multi-argument functions across distinct axes', () => {
+    expect(cellValues('clamp(scenario(low: 1, high: 5), scenario[geo](us: 2, eu: 3))')).toEqual([
+      2, 3, 5, 5
+    ]);
+    expect(cellValues('round(scenario(low: 1.24, high: 2.56), digits = 1)')).toEqual([1.2, 2.6]);
+  });
+
+  it('sums aligned and crossed scenarios with labels preserved', () => {
+    expect(cellValues('x=scenario[case](low:1,high:2)\nsum(x,x)')).toEqual([2, 4]);
+    expect(cellValues('sum(scenario[case](low:1,high:2), 3)')).toEqual([4, 5]);
+    expect(cellValues('sum(scenario[case](low:1,high:2), scenario[geo](us:10,eu:20))')).toEqual([
+      11, 21, 12, 22
+    ]);
+  });
+
+  it('sums scenario values from preceding lines with sum(above)', () => {
+    expect(
+      cellValues(`x = scenario[case](low:1,high:2)
+y = scenario[case](low:3,high:4)
+sum(above)`)
+    ).toEqual([4, 6]);
+  });
+});
+
+it('renders multi-axis coordinates as named tuples', () => {
+  const text =
+    one(
+      'scenario[case](low:1,high:2)*scenario[geo](us:10,eu:20)*scenario[season](winter:1,summer:2)'
+    ).display?.text ?? '';
+  expect(text).toContain('case=low, geo=us, season=winter');
+  expect(text).not.toContain('0=');
+});
 describe('reducers with over <axis>', () => {
   it('collapses a single axis by min / max / mean / sum', () => {
     expect(num('min(scenario[case](low: 8, base: 10, high: 14) over case)')).toBe(8);

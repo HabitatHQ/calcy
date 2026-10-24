@@ -13,6 +13,8 @@ function shareHash(body: string, title: string): string {
 async function loadSheet(page: Page, body: string, title: string) {
 	await page.goto(`/#${shareHash(body, title)}`);
 	await page.locator('.cm-editor').first().waitFor({ state: 'visible' });
+	await expect(page.locator('.cm-content').first()).toHaveText(body);
+	await expect(page.getByRole('textbox', { name: 'sheet title' })).toHaveValue(title);
 }
 
 async function openSettings(page: Page) {

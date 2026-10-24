@@ -211,9 +211,29 @@ function exportBytes(): Uint8Array {
 
 async function importBytes(bytes: Uint8Array) {
   if (!pool) throw new Error('import is unavailable here — calcy is open in another tab');
+  // SAHPool validates only the SQLite header before overwriting its slot.
+  // Preserve an exact copy so failed writes or integrity/schema checks restore
+  // the prior database rather than leaving an unusable file behind.
+  const original = pool.exportFile(DB_PATH);
   db.close();
-  await pool.importDb(DB_PATH, bytes);
-  db = new pool.OpfsSAHPoolDb(DB_PATH);
+  try {
+    await pool.importDb(DB_PATH, bytes);
+    db = new pool.OpfsSAHPoolDb(DB_PATH);
+    const integrity = rows('PRAGMA integrity_check')[0]?.integrity_check;
+    if (integrity !== 'ok') throw new Error('imported database failed SQLite integrity check');
+    rows('SELECT id, title, body, seed FROM sheet LIMIT 0');
+    rows('SELECT name, definition FROM custom_unit LIMIT 0');
+    rows('SELECT key, value FROM setting LIMIT 0');
+  } catch (error) {
+    try {
+      db.close();
+    } catch {
+      // The pool import itself may fail before a replacement DB is opened.
+    }
+    await pool.importDb(DB_PATH, original);
+    db = new pool.OpfsSAHPoolDb(DB_PATH);
+    throw error;
+  }
 }
 
 // The three tables a JSON backup carries (the shell wraps these in the

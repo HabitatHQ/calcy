@@ -220,7 +220,18 @@ export function formatSummary(
     // them all. The display layer draws the grid; `text` is a compact fallback.
     const cells = s.cells.map((c) => formatSummary(c, pinned, fmt, level));
     const single = s.axes.length === 1;
-    const labels = single ? s.axes[0].coords : cells.map((_, i) => String(i));
+    const labels = single
+      ? s.axes[0].coords
+      : cells.map((_, i) => {
+          let remainder = i;
+          const coords = Array<string>(s.axes.length);
+          for (let axis = s.axes.length - 1; axis >= 0; axis--) {
+            const axisCoords = s.axes[axis].coords;
+            coords[axis] = axisCoords[remainder % axisCoords.length];
+            remainder = Math.floor(remainder / axisCoords.length);
+          }
+          return s.axes.map((axis, index) => `${axis.name}=${coords[index]}`).join(', ');
+        });
     const body = cells.map((c, i) => `${labels[i]}=${c.text}`).join(', ');
     const text = single ? `${s.axes[0].name}: ${body}` : body;
     return {

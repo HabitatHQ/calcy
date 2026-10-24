@@ -258,8 +258,8 @@ export class SheetController {
   // before switching sheet identity (new/open/template) so the current sheet's
   // last sub-debounce edits land in its row rather than surviving only as a
   // revision snapshot the user has to dig out of history.
-  private async flushSave() {
-    if (!this.db) return;
+  private async flushSave(): Promise<boolean> {
+    if (!this.db) return false;
     clearTimeout(this.saveTimer);
     this.saveTimer = undefined;
     try {
@@ -270,8 +270,10 @@ export class SheetController {
         seed: this.seed
       });
       this.saveError = false;
+      return true;
     } catch {
       this.saveError = true;
+      return false;
     }
   }
 
@@ -317,7 +319,7 @@ export class SheetController {
 
   async newSheet() {
     if (!this.db) return;
-    await this.flushSave(); // commit pending edits to the current sheet first
+    if (!(await this.flushSave())) return; // do not switch away after a failed save
     await this.db.snapshot(this.sheetId, this.body); // snapshot before leaving
     this.sheetId = crypto.randomUUID();
     this.title = 'Untitled';
@@ -333,7 +335,7 @@ export class SheetController {
       this.showSheets = false;
       return;
     }
-    await this.flushSave(); // commit pending edits to the current sheet first
+    if (!(await this.flushSave())) return;
     await this.db.snapshot(this.sheetId, this.body);
     const data = await this.db.loadSheet(id);
     if (data) this.adopt(data);
@@ -408,7 +410,7 @@ export class SheetController {
       this.loadTemplate(t);
       return;
     }
-    await this.flushSave(); // commit pending edits to the current sheet first
+    if (!(await this.flushSave())) return;
     await this.db.snapshot(this.sheetId, this.body);
     this.sheetId = crypto.randomUUID();
     this.title = t.title;
@@ -560,29 +562,46 @@ export class SheetController {
 
   async exportDb() {
     if (!this.db) return;
-    const bytes = await this.db.export();
-    this.download('calcy.sqlite', bytes as BlobPart, 'application/x-sqlite3');
+    if (!(await this.flushSave())) {
+      this.setDataMessage('Could not export: latest sheet edits could not be saved.', true);
+      return;
+    }
+    try {
+      const bytes = await this.db.export();
+      this.download('calcy.sqlite', bytes as BlobPart, 'application/x-sqlite3');
+    } catch (e) {
+      this.setDataMessage(this.dataErrorText(e, 'Could not export.'), true);
+    }
   }
 
   async importDb(file: File) {
     if (!this.db) return;
-    // Drop any pending autosave of the current (pre-import) sheet: import
-    // replaces the whole database, so a late write would inject stale rows
-    // into the freshly-imported data.
-    clearTimeout(this.saveTimer);
-    this.saveTimer = undefined;
-    const bytes = new Uint8Array(await file.arrayBuffer());
-    await this.db.import(bytes);
-    const last = await this.db.loadLast();
-    if (last) this.adopt(last);
-    await this.refreshSheets();
+    try {
+      // The import replaces the whole database, so don't let a late write inject
+      // pre-import data after it.
+      clearTimeout(this.saveTimer);
+      this.saveTimer = undefined;
+      const bytes = new Uint8Array(await file.arrayBuffer());
+      await this.db.import(bytes);
+      const last = await this.db.loadLast();
+      if (last) this.adopt(last);
+      await this.refreshSheets();
+    } catch (e) {
+      this.setDataMessage(
+        `Could not import that database: ${this.dataErrorText(e, 'database replacement failed')}`,
+        true
+      );
+    }
   }
 
   // --- versioned JSON backup / restore + destructive ops --------------------
   async exportJson() {
     if (!this.db) return;
     try {
-      await this.flushSave(); // ensure the current sheet's latest edits are included
+      if (!(await this.flushSave())) {
+        this.setDataMessage('Could not export: latest sheet edits could not be saved.', true);
+        return;
+      }
       const doc = buildExport(await this.db.exportData(), new Date().toISOString());
       this.download('calcy-backup.json', JSON.stringify(doc, null, 2), 'application/json');
       this.setDataMessage(`Exported ${importSummary(doc)}.`);

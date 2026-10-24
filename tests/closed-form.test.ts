@@ -311,3 +311,15 @@ N = R * f_p * n_e * f_l * f_i * f_c * L`;
     expect(a).toBeLessThan(1e10);
   });
 });
+it('keeps exact self-correlation at small sample counts', () => {
+  for (const N of [1, 4]) {
+    expect(exact('x = normal(0, 1)\ny = x - x\np(y, 0.95)', { N, seed: 10 })).toBe(0);
+    expect(exact('x = lognormal(1, 4)\ny = x / x\nmean(y)', { N, seed: 10 })).toBe(1);
+  }
+});
+it('preserves perfect correlations across derived sample arrays at small N', () => {
+  for (const N of [4, 8]) {
+    expect(exact('x = normal(0, 1)\np(x - 1 * x, 0.95)', { N, seed: 11 })).toBe(0);
+    expect(exact('x = lognormal(1, 4)\nmean(x / (1 * x))', { N, seed: 11 })).toBe(1);
+  }
+});

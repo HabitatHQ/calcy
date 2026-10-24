@@ -22,7 +22,9 @@ import type { Dimension, Value, ValueMeta } from './value';
 // layer promises — while structural coupling (variable reuse, `correlate`)
 // clears the floor and is carried into the combined moment.
 function structuralCorr(a: Float64Array, b: Float64Array): number {
+  if (a === b) return 1;
   const r = correlation(a, b);
+  if (Number.isFinite(r) && Math.abs(r) >= 1 - 1e-12) return r;
   return Math.abs(r) < 4 / Math.sqrt(a.length) ? 0 : r;
 }
 
@@ -30,6 +32,7 @@ function structuralCorr(a: Float64Array, b: Float64Array): number {
 // lognormal product/ratio's spread (X = exp(A), so it is corr(A, B)). Samples
 // are positive by construction, so the log is finite.
 function structuralLogCorr(a: Float64Array, b: Float64Array): number {
+  if (a === b) return 1;
   const n = Math.min(a.length, b.length);
   const la = new Float64Array(n);
   const lb = new Float64Array(n);
