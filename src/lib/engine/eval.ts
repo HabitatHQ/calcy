@@ -734,7 +734,6 @@ function evalPick(callArgs: CallArg[], ctx: EvalCtx): Value {
 // element-wise across the axis's cells (per-draw for distributions), so they
 // have a natural definition; other reducers (median, sd, p, …) do not.
 const OVER_REDUCERS = new Set(['min', 'max', 'mean', 'sum']);
-
 // Fold a scenario axis's cells with the named reducer. Cells share one dim/hint
 // (they are coords of one value), so we reduce pairwise via binop; distributions
 // fold per-draw, preserving correlation-by-reuse.
@@ -884,7 +883,64 @@ function evalBracket(callArgs: CallArg[], ctx: EvalCtx): Value {
   return { dim: dimMul(x.dim, rd), samples: out };
 }
 
-function evalCall(node: { name: string; args: CallArg[] }, ctx: EvalCtx): Value {
+// Ordinary functions preserve scenario axes; their reducers consume samples
+// within each cell. Axis reducers and selector syntax are handled separately.
+const UNARY_CALLS = new Set([
+  'chance',
+  'mean',
+  'median',
+  'mode',
+  'skew',
+  'sd',
+  'stdev',
+  'min',
+  'max',
+  'sqrt',
+  'abs',
+  'sin',
+  'cos',
+  'tan',
+  'asin',
+  'acos',
+  'atan',
+  'ceil',
+  'floor',
+  'exp',
+  'ln',
+  'log',
+  'log10'
+]);
+const CELL_CALLS = new Set([
+  ...UNARY_CALLS,
+  'p',
+  'percentile',
+  'interval',
+  'round',
+  'clamp',
+  'cagr'
+]);
+
+function mapCall(values: Value[], apply: (cells: Value[]) => Value): Value {
+  let axes: Axis[] = [];
+  let rows: Value[][] = [[]];
+  for (const value of values) {
+    const resolved = resolveAxes(axes, value.axes ?? []);
+    if (resolved.leftIndex.length > MAX_CELLS)
+      throw new Error(
+        `scenario grid too large: ${resolved.leftIndex.length} cells (cap ${MAX_CELLS})`
+      );
+    const cells = cellsOf(value);
+    rows = resolved.leftIndex.map((i, k) => [...rows[i], cells[resolved.rightIndex[k]]]);
+    axes = resolved.axes;
+  }
+  return makeGrid(axes, rows.map(apply));
+}
+
+function evalCall(
+  node: { name: string; args: CallArg[] },
+  ctx: EvalCtx,
+  evaluated?: Value[]
+): Value {
   const name = node.name;
   const callArgs = node.args;
   const hasNamed = callArgs.some((a) => a.name != null);
@@ -905,13 +961,21 @@ function evalCall(node: { name: string; args: CallArg[] }, ctx: EvalCtx): Value 
   const overArg = callArgs.find((a) => a.name === 'over');
   if (overArg) return evalReduceOver(name, callArgs, overArg, ctx);
   const args: Node[] = hasNamed ? bindNamed(name, callArgs) : callArgs.map((a) => a.value as Node);
+  if (UNARY_CALLS.has(name) && args.length !== 1)
+    throw new Error(`${name}() takes exactly one argument`);
+  // Validate arity before evaluating operands: malformed extra args must not
+  // trigger unrelated parse/evaluation failures first.
+  const values = !evaluated && CELL_CALLS.has(name) ? args.map((arg) => evalNode(arg, ctx)) : null;
+  if (values?.some((value) => value.axes))
+    return mapCall(values, (cells) => evalCall(node, ctx, cells));
+  if (values) evaluated = values;
   const ev = (i: number) => {
     // Guard the unary/reducer cases that read ev(0) without an explicit arity
     // check (mean, min, sqrt, sin, …). Without this, a no-arg call like `mean()`
     // dereferences `undefined.type` deep in evalNode and leaks an internal
     // "Cannot read properties of undefined" error instead of a usable message.
     if (args[i] === undefined) throw new Error(`${name}() needs an argument`);
-    return evalNode(args[i], ctx);
+    return evaluated ? evaluated[i] : evalNode(args[i], ctx);
   };
   switch (name) {
     case 'normal': {
@@ -1218,8 +1282,15 @@ function evalCall(node: { name: string; args: CallArg[] }, ctx: EvalCtx): Value 
           throw new Error(
             `sum: incompatible dimensions (${dimToString(dim) || 'number'} vs ${dimToString(v.dim) || 'number'})`
           );
+      if (vals.some((value) => value.axes)) {
+        return vals.reduce((acc, value) =>
+          acc.axes || value.axes
+            ? resolveAxisBinop(acc, value, (a, b) => binScalar('+', a, b, ctx))
+            : binScalar('+', acc, value, ctx)
+        );
+      }
       return withHint(
-        vals.reduce((acc, v) => binop(acc, v, (x, y) => x + y, dim, ctx.fns.N)),
+        vals.reduce((acc, value) => binop(acc, value, (a, b) => a + b, dim, ctx.fns.N)),
         sharedHint(vals)
       );
     }
@@ -1640,16 +1711,22 @@ export function evalNode(node: Node, ctx: EvalCtx): Value {
         throw new Error('range bounds and step must be dimensionless');
       if (loVal.samples || hiVal.samples || stepVal?.samples)
         throw new Error('range bounds and step must be deterministic');
-      const lo = loVal.scalar as number;
-      const hi = hiVal.scalar as number;
-      const step = stepVal ? (stepVal.scalar as number) : 1;
+      const lo = scalarParam(loVal, 'range lower bound');
+      const hi = scalarParam(hiVal, 'range upper bound');
+      const step = stepVal ? scalarParam(stepVal, 'range step') : 1;
+      if (![lo, hi, step].every(Number.isFinite))
+        throw new Error('range bounds and step must be finite');
       if (step <= 0) throw new Error('range step must be positive');
       if (hi < lo) throw new Error(`range upper (${hi}) is below lower (${lo})`);
+      const count = Math.floor((hi - lo) / step + 1e-9) + 1;
+      if (!Number.isSafeInteger(count) || count > 1_000_000)
+        throw new Error('range cardinality must be finite and at most 1000000 values');
       const out: number[] = [];
-      // inclusive of both ends; with floating-point step the last sample
-      // may overshoot hi by less than step — guard with a small epsilon.
-      for (let v = lo; v <= hi + step * 1e-9; v += step) {
-        out.push(Number(v.toFixed(10)));
+      for (let i = 0; i < count; i++) {
+        const value = lo + i * step;
+        if (!Number.isFinite(value) || (i > 0 && value <= lo + (i - 1) * step))
+          throw new Error('range step cannot make forward progress at these bounds');
+        out.push(Number(value.toFixed(10)));
       }
       return { dim: {}, list: out };
     }

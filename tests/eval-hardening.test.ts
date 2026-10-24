@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { one, values } from './helpers';
+import { lines, makeEngine, one } from './helpers';
 
 // Hardening regressions for the evaluator: crashes and missing validation that
 // let NaN / Infinity / garbage out, or that surfaced an internal error instead
@@ -7,8 +7,8 @@ import { one, values } from './helpers';
 // assert on that rather than on a thrown exception.
 
 const err = (src: string): string => {
-  const ls = values(src);
-  const last = ls[ls.length - 1];
+  const results = lines(src);
+  const last = results[results.length - 1];
   return last?.error ?? '';
 };
 const scalar = (src: string): number => Number(one(src).display?.value);
@@ -38,6 +38,49 @@ describe('no-arg calls report an arity error, not an internal crash', () => {
   }
 });
 
+describe('range and numeric literal hardening', () => {
+  it('handles large singleton ranges and rejects non-advancing cardinalities', () => {
+    expect(scalar('sum(10000000000000000..10000000000000000)')).toBe(1e16);
+    expect(err('sum(0..2000000)')).toMatch(/cardinality/);
+  });
+
+  it('rejects non-finite inputs and steps that cannot advance', () => {
+    for (const source of [
+      'sum(0..Infinity)',
+      'sum(0..1 step (0 / 0))',
+      'sum(0..1 step 0)',
+      'sum(10000000000000000..10000000000000002)'
+    ]) {
+      expect(err(source)).toMatch(/finite|positive|forward progress/);
+    }
+    expect(scalar('sum(0..0.3 step 0.1)')).toBeCloseTo(0.6);
+  });
+
+  it('rejects malformed decimals and exponents while preserving valid forms', () => {
+    for (const src of ['1.2.3', '1e+', '2e3e4']) expect(err(src)).toMatch(/invalid number/);
+    expect(scalar('1_000 + 2e3 + 1k')).toBe(4000);
+  });
+
+  it('rejects extra operands to unary reducers and math', () => {
+    for (const src of ['max(1,100)', 'mean(1,3)', 'min(10,1)', 'sqrt(4,9)'])
+      expect(err(src)).toMatch(/exactly one argument/);
+    expect(scalar('sum(1,2)')).toBe(3);
+  });
+});
+
+describe('custom units reject invalid scales at definition', () => {
+  it('rejects zero, infinite, and NaN scales', () => {
+    for (const definition of [
+      'unit broken = 0 m',
+      'unit broken = 1e999 m',
+      'unit broken = 0 / 0 m'
+    ])
+      expect(err(definition)).not.toBe('');
+    expect(() => makeEngine({}, { broken: '0 m' })).toThrow(/finite and non-zero/);
+    const engine = makeEngine();
+    expect(() => engine.defineUnit('broken', '0 m')).toThrow(/finite and non-zero/);
+  });
+});
 describe('distribution constructors validate their parameters', () => {
   it('normal rejects a negative sd', () => {
     expect(err('normal(0, -1)')).toMatch(/sd must be non-negative/);

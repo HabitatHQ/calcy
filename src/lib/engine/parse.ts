@@ -343,35 +343,30 @@ function tokenize(src: string): Tok[] {
     if (/[0-9]/.test(c) || (c === '.' && /[0-9]/.test(src[i + 1] ?? ''))) {
       let s = '';
       while (i < src.length && /[0-9_.eE]/.test(src[i])) {
-        // allow exponent sign only right after e/E
-        if ((src[i] === 'e' || src[i] === 'E') && (src[i + 1] === '+' || src[i + 1] === '-')) {
+        if ((src[i] === 'e' || src[i] === 'E') && /[+-]/.test(src[i + 1] ?? '')) {
           s += src[i] + src[i + 1];
           i += 2;
           continue;
         }
-        // `..` is the range operator; don't consume a second `.` into a number.
         if (src[i] === '.' && src[i + 1] === '.') break;
-        if (src[i] !== '_') s += src[i];
-        i++;
+        s += src[i++];
       }
-      // Magnitude suffixes: `k`/`K` → ×10³, `M` → ×10⁶. Consumed only when the
-      // suffix letter stands alone (the next char is not an identifier part),
-      // so a unit that begins with the letter is untouched: `12kg` is 12
-      // kilograms, `12MB` is 12 megabytes. `T` (Tesla) and `B` (byte/bel) are
-      // deliberately excluded, and lowercase `m` is the metre — so `M` (million)
-      // is upper-case only.
+      const literal = s.replaceAll('_', '');
+      if (!/^(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?$/.test(literal))
+        throw new Error(`invalid number '${s}'`);
+      const numeric = Number(literal);
       const SUFFIX: Record<string, number> = { k: 1000, K: 1000, M: 1e6 };
       let mult = 1;
       const suf = src[i];
-      const after = src[i + 1];
-      if (suf in SUFFIX && (after === undefined || !isIdentPart(after))) {
+      if (suf in SUFFIX && (src[i + 1] === undefined || !isIdentPart(src[i + 1]))) {
         mult = SUFFIX[suf];
         i++;
       }
+      if (!Number.isFinite(numeric * mult)) throw new Error(`invalid number '${s}'`);
       toks.push({
         kind: 'num',
         value: mult === 1 ? s : s + suf,
-        num: Number.parseFloat(s) * mult,
+        num: numeric * mult,
         start,
         end: i
       });

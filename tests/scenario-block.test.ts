@@ -96,6 +96,28 @@ describe('scenario <axis>: table block', () => {
   });
 });
 
+describe('scenario shared-unit expression precedence', () => {
+  it('applies one trailing unit after parenthesizing every cell expression', () => {
+    const sheet = [
+      'scenario case:',
+      '  #      low       high',
+      '  ratio = 1 / 2     3 / 4    m'
+    ].join('\n');
+    expect(cellsOf(sheet, 'ratio')).toEqual([0.5, 0.75]);
+  });
+});
+
+it('keeps addition, negatives, and where expressions inside each shared-unit cell', () => {
+  const sheet = [
+    'scenario case:',
+    '  #       low                  high',
+    '  result = 1 + 2              - (2 + 2)    m',
+    '  local  = a + 1 where a = 2  b + 1 where b = 3  m'
+  ].join('\n');
+  expect(cellsOf(sheet, 'result')).toEqual([3, -4]);
+  expect(cellsOf(sheet, 'local')).toEqual([3, 4]);
+});
+
 describe('scenario <axis>: table block — errors', () => {
   it('requires a coord header row before the data rows', () => {
     const sheet = ['scenario case:', '  price = 8     10     14'].join('\n');

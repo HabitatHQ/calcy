@@ -2,6 +2,7 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { run } from '@stricli/core';
+import { compile } from 'mdsvex';
 import { afterAll, describe, expect, it } from 'vitest';
 import { app } from '../src/cli/command';
 import { OUTPUT_FORMATS, render } from '../src/cli/render';
@@ -94,6 +95,13 @@ describe('render dispatch', () => {
   });
 });
 
+it('escapes literal Markdown table cell syntax', async () => {
+  const note = '`C:\\temp` | **literal**';
+  const source = `x = 1 # ${note}`;
+  const compiled = await compile(render(makeEngine().evalSheet(source), 'md'));
+  const cells = [...(compiled?.code ?? '').matchAll(/<td>(.*?)<\/td>/gs)].map((match) => match[1]);
+  expect(cells).toEqual(['1', 'x', source, '1', 'point', note]);
+});
 describe('CLI integration (stricli run)', () => {
   const dir = mkdtempSync(join(tmpdir(), 'calcy-cli-render-'));
   const file = join(dir, 'workbook.calcy');
