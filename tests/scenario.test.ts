@@ -7,9 +7,10 @@ import { num, one, values } from './helpers';
 // scalar/distribution cell.
 
 const scenarioOf = (src: string): ScenarioSummary => {
-  const l = one(src);
-  if (l.error) throw new Error(`${src} → ${l.error}`);
-  if (l.summary?.kind !== 'scenario') throw new Error(`expected scenario for: ${src}`);
+  const results = values(src);
+  const l = results[results.length - 1];
+  if (l?.error) throw new Error(`${src} → ${l.error}`);
+  if (l?.summary?.kind !== 'scenario') throw new Error(`expected scenario for: ${src}`);
   return l.summary;
 };
 
@@ -179,6 +180,56 @@ describe('pick(scenario, axis = "coord")', () => {
   });
 });
 
+describe('scenario wrappers in ordinary functions and sums', () => {
+  it('maps reducers and unary math per cell without collapsing axes', () => {
+    expect(cellValues('mean(scenario[case](low: 1, high: 2))')).toEqual([1, 2]);
+    expect(cellValues('sqrt(scenario[case](low: 4, high: 9))')).toEqual([2, 3]);
+  });
+
+  it('reduces samples inside each cell while retaining its coordinates', () => {
+    const normalCells = 'scenario(low: normal(10, 1), high: normal(20, 2))';
+    expect(cellValues(`mean(${normalCells})`)).toEqual([10, 20]);
+    expect(cellValues(`p(${normalCells}, 0.5)`)).toEqual([10, 20]);
+    expect(cellValues('chance(scenario(low: -1, high: 1) > 0)')).toEqual([0, 1]);
+    const bands = scenarioOf('interval(scenario(low: 1, high: 2), 0.9)');
+    expect(bands.cells).toEqual([
+      { kind: 'list', dim: {}, list: [1, 1] },
+      { kind: 'list', dim: {}, list: [2, 2] }
+    ]);
+  });
+
+  it('broadcasts multi-argument functions across distinct axes', () => {
+    expect(cellValues('clamp(scenario(low: 1, high: 5), scenario[geo](us: 2, eu: 3))')).toEqual([
+      2, 3, 5, 5
+    ]);
+    expect(cellValues('round(scenario(low: 1.24, high: 2.56), digits = 1)')).toEqual([1.2, 2.6]);
+  });
+
+  it('sums aligned and crossed scenarios with labels preserved', () => {
+    expect(cellValues('x=scenario[case](low:1,high:2)\nsum(x,x)')).toEqual([2, 4]);
+    expect(cellValues('sum(scenario[case](low:1,high:2), 3)')).toEqual([4, 5]);
+    expect(cellValues('sum(scenario[case](low:1,high:2), scenario[geo](us:10,eu:20))')).toEqual([
+      11, 21, 12, 22
+    ]);
+  });
+
+  it('sums scenario values from preceding lines with sum(above)', () => {
+    expect(
+      cellValues(`x = scenario[case](low:1,high:2)
+y = scenario[case](low:3,high:4)
+sum(above)`)
+    ).toEqual([4, 6]);
+  });
+});
+
+it('renders multi-axis coordinates as named tuples', () => {
+  const text =
+    one(
+      'scenario[case](low:1,high:2)*scenario[geo](us:10,eu:20)*scenario[season](winter:1,summer:2)'
+    ).display?.text ?? '';
+  expect(text).toContain('case=low, geo=us, season=winter');
+  expect(text).not.toContain('0=');
+});
 describe('reducers with over <axis>', () => {
   it('collapses a single axis by min / max / mean / sum', () => {
     expect(num('min(scenario[case](low: 8, base: 10, high: 14) over case)')).toBe(8);
@@ -216,5 +267,62 @@ describe('reducers with over <axis>', () => {
   it('rejects over on an unknown axis or a non-scenario', () => {
     expect(values('min(scenario[case](low: 8) over geo)')[0].error).toMatch(/no axis 'geo'/);
     expect(values('min(42 over case)')[0].error).toMatch(/no axes to collapse/);
+  });
+});
+
+describe('collection boundaries in numeric operations', () => {
+  it('applies marginal and cumulative brackets per scenario cell', () => {
+    expect(cellValues('bracket(scenario(low: 4, high: 12), 5: 10%, Infinity: 20%)')).toEqual([
+      0.1, 0.2
+    ]);
+    const result = cellValues(
+      'bracket(scenario(low: 4, high: 12), 5: 10%, Infinity: 20%, total = yes)'
+    );
+    expect(result[0]).toBeCloseTo(0.4, 10);
+    expect(result[1]).toBeCloseTo(1.9, 10);
+  });
+
+  it('converts every scenario cell through a bridge', () => {
+    const result = cellValues(
+      'bridge water = 18.015 g/mol\nscenario(low: 100 g, high: 200 g) in mol via water'
+    );
+    expect(result[0]).toBeCloseTo(100 / 18.015, 8);
+    expect(result[1]).toBeCloseTo(200 / 18.015, 8);
+  });
+
+  it.each([
+    '[100, 200] * ₹',
+    '[1, 2] * °C',
+    'sqrt([1, 4])',
+    'chance([0, 1])',
+    'sum([1, 2], 3)',
+    'bracket([1, 2], Infinity: 10%)',
+    '5 + [1, 2]'
+  ])('reports a list-domain error for %s', (source) => {
+    expect(values(source)[0].error).toMatch(/list/i);
+  });
+
+  it.each([
+    'mixture(scenario(low: 1, high: 2), 10)',
+    'mixture(1: scenario(low: 1, high: 2), 1: 10)',
+    'discrete(1: scenario(low: 1, high: 2), 1: 10)',
+    'scenario(low: 1, high: 2) given 1',
+    '1 given scenario(low: 0, high: 1)'
+  ])('rejects unsupported scenario inputs without raw runtime errors: %s', (source) => {
+    expect(values(source)[0].error).toMatch(/scenario/i);
+  });
+
+  it('rejects mixed sum(above) when an earlier result is a list', () => {
+    const result = values('x = 5\nband = interval(normal(10, 2))\nsum(above)');
+    expect(result[0].error).toBeUndefined();
+    expect(result[1].error).toBeUndefined();
+    expect(result[2].error).toMatch(/list/i);
+  });
+
+  it('retains the supported explicit list reducers', () => {
+    expect(num('sum([1, 2, 3])')).toBe(6);
+    expect(num('mean([1, 2, 3])')).toBe(2);
+    expect(num('min([1, 2, 3])')).toBe(1);
+    expect(num('max([1, 2, 3])')).toBe(3);
   });
 });

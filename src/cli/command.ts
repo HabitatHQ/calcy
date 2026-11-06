@@ -9,7 +9,14 @@ import {
   type CommandContext,
   numberParser
 } from '@stricli/core';
-import { DEFAULT_OPTIONS, Engine, type EngineOptions, type NumberFormat } from '../lib/engine';
+import {
+  DEFAULT_OPTIONS,
+  Engine,
+  type EngineOptions,
+  isValidConfidence,
+  isValidSampleCount,
+  type NumberFormat
+} from '../lib/engine';
 import { OUTPUT_FORMATS, type OutputFormat, render } from './render';
 
 const NUMBER_FORMATS = ['auto', 'compact', 'scientific', 'newspaper'] as const;
@@ -89,8 +96,13 @@ const command = buildCommand<Flags, [string], LocalContext>({
       },
       samples: {
         kind: 'parsed',
-        parse: numberParser,
-        brief: 'Monte Carlo sample count',
+        parse: (input) => {
+          const count = numberParser(input);
+          if (!isValidSampleCount(count))
+            throw new Error('sample count must be a positive integer');
+          return count;
+        },
+        brief: 'Monte Carlo sample count (positive integer)',
         default: String(DEFAULT_OPTIONS.N)
       },
       seed: {
@@ -101,7 +113,11 @@ const command = buildCommand<Flags, [string], LocalContext>({
       },
       confidence: {
         kind: 'parsed',
-        parse: numberParser,
+        parse: (input) => {
+          const confidence = numberParser(input);
+          if (!isValidConfidence(confidence)) throw new Error('confidence level must be in (0, 1)');
+          return confidence;
+        },
         brief: 'Confidence level in (0, 1) for interval syntax',
         default: String(DEFAULT_OPTIONS.confidence)
       },

@@ -93,5 +93,8 @@ export class EngineClient {
 
   destroy() {
     this.worker.terminate();
+    for (const pending of this.pending.values())
+      pending.reject(new Error('engine client was disposed'));
+    this.pending.clear();
   }
 }

@@ -9,6 +9,15 @@ describe('parseSettings', () => {
       samples: 5000
     });
   });
+  it('accepts positive safe-integer samples and rejects fractional or unsafe counts', () => {
+    expect(parseSettings({ samples: '1' }).samples).toBe(1);
+    expect(parseSettings({ samples: String(Number.MAX_SAFE_INTEGER) }).samples).toBe(
+      Number.MAX_SAFE_INTEGER
+    );
+    for (const samples of ['0', '0.5', '1.2', '-1', '9007199254740992', 'NaN', '']) {
+      expect(parseSettings({ samples }).samples).toBeUndefined();
+    }
+  });
   it('omits numeric settings when absent or empty', () => {
     const s = parseSettings({ monthDays: '' });
     expect(s.monthDays).toBeUndefined();

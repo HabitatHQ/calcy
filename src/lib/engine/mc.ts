@@ -152,8 +152,10 @@ export function correlateTo(
 // Cholesky factor L (lower triangular, L·Lᵀ = m) of a symmetric matrix. Doubles
 // as the positive-definiteness test: a non-positive pivot means m is not PD, so
 // the requested joint correlation is unachievable and we throw rather than
-// silently projecting onto the nearest valid matrix.
-function cholesky(m: number[][]): number[][] {
+// silently projecting onto the nearest valid matrix. Non-finite entries (NaN
+// from a degenerate sample set) are rejected too: a NaN pivot would otherwise
+// slip through the `sum <= 1e-12` comparison and poison every downstream value.
+function cholesky(m: number[][], what: string): number[][] {
   const n = m.length;
   const L = Array.from({ length: n }, () => new Array<number>(n).fill(0));
   for (let i = 0; i < n; i++) {
@@ -161,7 +163,8 @@ function cholesky(m: number[][]): number[][] {
       let sum = m[i][j];
       for (let k = 0; k < j; k++) sum -= L[i][k] * L[j][k];
       if (i === j) {
-        if (sum <= 1e-12) throw new Error('correlation matrix is not positive definite');
+        if (!Number.isFinite(sum) || sum <= 1e-12)
+          throw new Error(`${what} is not positive definite`);
         L[i][j] = Math.sqrt(sum);
       } else {
         L[i][j] = sum / L[j][j];
@@ -222,6 +225,9 @@ export function correlateJoint(
   const k = cols.length;
   if (k <= 1) return cols; // one variable: nothing to couple
   const n = cols[0].length;
+  const P = cholesky(target, 'correlation matrix');
+  if (n <= k)
+    throw new Error(`correlate needs more samples than variables (${n} samples, ${k} variables)`);
 
   // Score matrix S (n×k): each column is the same van der Waerden scores in a
   // fresh random order. Standardised (mean 0, unit variance) per column.
@@ -251,8 +257,7 @@ export function correlateJoint(
       T[a][b] = dot / n;
       T[b][a] = T[a][b];
     }
-  const Q = cholesky(T);
-  const P = cholesky(target);
+  const Q = cholesky(T, 'sample score matrix; increase the sample count');
   const Qinv = invLowerTri(Q);
   const A = Array.from({ length: k }, () => new Array<number>(k).fill(0));
   for (let a = 0; a < k; a++)
@@ -285,6 +290,7 @@ export function correlateJoint(
 
 // CI lo..hi at fns.level. Both positive -> lognormal; spanning/≤0 -> normal.
 export function ciSamples(lo: number, hi: number, fns: DistFns): Float64Array {
+  if (!(lo <= hi)) throw new Error('interval bounds must be ordered (lo <= hi)');
   const out = new Float64Array(fns.N);
   const z = zForLevel(fns.level);
   if (lo > 0 && hi > 0) {
@@ -308,10 +314,12 @@ export function normalSamples(mean: number, sd: number, fns: DistFns): Float64Ar
 // lognormal parameterised by its [lower, upper] quantiles at fns.level (both > 0).
 export function lognormalSamples(pLower: number, pUpper: number, fns: DistFns): Float64Array {
   if (pLower <= 0 || pUpper <= 0) throw new Error('lognormal requires positive bounds');
+  if (!(pLower <= pUpper)) throw new Error('lognormal bounds must be ordered (p5 <= p95)');
   return ciSamples(pLower, pUpper, fns);
 }
 
 export function uniformSamples(a: number, b: number, fns: DistFns): Float64Array {
+  if (!(a <= b)) throw new Error('uniform bounds must be ordered (lo <= hi)');
   const out = new Float64Array(fns.N);
   const span = b - a;
   for (let i = 0; i < fns.N; i++) out[i] = a + fns.uniform() * span;
@@ -587,6 +595,9 @@ export function summarize(v: Value, level = 0.9): Summary {
   if (v.list) return { kind: 'list', list: v.list, dim: v.dim };
   if (v.scalar != null) return { kind: 'point', value: v.scalar, dim: v.dim };
   const samples = v.samples as Float64Array;
+  for (const sample of samples)
+    if (!Number.isFinite(sample))
+      throw new Error('distribution contains a non-finite draw; check the expression domain');
   const sorted = Float64Array.from(samples).sort();
   let sum = 0;
   for (let i = 0; i < sorted.length; i++) sum += sorted[i];

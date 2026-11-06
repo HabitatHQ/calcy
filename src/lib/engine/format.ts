@@ -1,5 +1,5 @@
 // Display formatting: turn a base-unit Summary into human strings, honouring
-// a pinned unit (from `in`/`to`) or falling back to the dimension signature.
+// a pinned unit (from `in`) or falling back to the dimension signature.
 
 import type { PinnedUnit } from './eval';
 import type { DistSummary, ListSummary, ScenarioSummary, Summary } from './mc';
@@ -170,17 +170,10 @@ function unitLabel(dim: Dimension, pinned?: PinnedUnit): string {
   return dimToString(dim);
 }
 
-// Symbol to use for money formatting. A pinned currency label (`$`, `k$`)
-// wins; otherwise look up the single non-zero dim key in the currency table.
-// Composite pinned labels (`$/req`, `€/kWh`) are rates, not money.
+// Scaled currency denominations retain their label: `100 cents`, not `$100`.
+// Base-currency aliases (`USD`, `$`, `INR`) use their currency's symbol.
 function moneySymbol(dim: Dimension, pinned?: PinnedUnit): string | null {
-  if (pinned) {
-    const stripped = pinned.label.replace(/[$€£¥]/g, '');
-    if (stripped === '') {
-      const m = pinned.label.match(/[$€£¥]/);
-      return m ? m[0] : null;
-    }
-  }
+  if (pinned && pinned.factor !== 1) return null;
   return CURRENCY_SYMBOLS[currencyKey(dim) ?? ''] ?? null;
 }
 
@@ -204,11 +197,8 @@ export function formatSummary(
   // a dimensionless value so the UI shows no tooltip.
   const baseUnit = dimToString(summary.dim) || undefined;
   const sym = moneySymbol(summary.dim, pinned);
-  // Money strings already include the symbol; skip the suffix so we don't
-  // render "$5.00 $". For composite pinned labels (e.g. `k$`), the label
-  // is non-symbolic so still appended to preserve the unit.
-  const suffix =
-    unit && (sym == null || (pinned && !/[$€£¥]/.test(pinned.label))) ? ` ${unit}` : '';
+  // A symbol already identifies the base currency; denominations need a suffix.
+  const suffix = unit && sym == null ? ` ${unit}` : '';
   // The numeric fields stay as plain `String(n)` so they're always machine-
   // parseable (Number(value) works, the share-link roundtrip works, copy-
   // as-expression works). The formatted display lives in `text` via
@@ -220,7 +210,18 @@ export function formatSummary(
     // them all. The display layer draws the grid; `text` is a compact fallback.
     const cells = s.cells.map((c) => formatSummary(c, pinned, fmt, level));
     const single = s.axes.length === 1;
-    const labels = single ? s.axes[0].coords : cells.map((_, i) => String(i));
+    const labels = single
+      ? s.axes[0].coords
+      : cells.map((_, i) => {
+          let remainder = i;
+          const coords = Array<string>(s.axes.length);
+          for (let axis = s.axes.length - 1; axis >= 0; axis--) {
+            const axisCoords = s.axes[axis].coords;
+            coords[axis] = axisCoords[remainder % axisCoords.length];
+            remainder = Math.floor(remainder / axisCoords.length);
+          }
+          return s.axes.map((axis, index) => `${axis.name}=${coords[index]}`).join(', ');
+        });
     const body = cells.map((c, i) => `${labels[i]}=${c.text}`).join(', ');
     const text = single ? `${s.axes[0].name}: ${body}` : body;
     return {

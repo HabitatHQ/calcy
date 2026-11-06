@@ -32,7 +32,7 @@ export function slugify(title: string): string {
 }
 
 function csvCell(s: string): string {
-  return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+  return /[",\r\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
 }
 
 // Column headings for the tabular result export, shared by every renderer

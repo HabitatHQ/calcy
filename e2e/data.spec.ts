@@ -13,6 +13,8 @@ function shareHash(body: string, title: string): string {
 async function loadSheet(page: Page, body: string, title: string) {
 	await page.goto(`/#${shareHash(body, title)}`);
 	await page.locator('.cm-editor').first().waitFor({ state: 'visible' });
+	await expect(page.locator('.cm-content').first()).toHaveText(body);
+	await expect(page.getByRole('textbox', { name: 'sheet title' })).toHaveValue(title);
 }
 
 async function openSettings(page: Page) {
@@ -21,6 +23,36 @@ async function openSettings(page: Page) {
 	await page.getByRole('heading', { name: 'Settings' }).waitFor({ state: 'visible' });
 }
 
+test('replacing SQLite restores settings and custom units immediately, including defaults', async ({ page }) => {
+	await loadSheet(page, 'converted = 1 month in day', 'Calendar');
+	await expect(page.locator('.gutter .row .txt').first()).toContainText('30.4');
+	await openSettings(page);
+
+	const [download] = await Promise.all([
+		page.waitForEvent('download'),
+		page.getByRole('button', { name: 'Export .sqlite' }).click()
+	]);
+	const backupPath = await download.path();
+
+	await page.locator('details.advanced > summary').click();
+	await page.locator('details.advanced input[type="number"]').first().fill('10');
+	await page.locator('details.advanced input[type="number"]').first().press('Tab');
+	await page.getByRole('button', { name: 'Dark', exact: true }).click();
+	await page.keyboard.press('Escape');
+	await page.getByRole('tab', { name: 'Tape' }).click();
+	await openSettings(page);
+	await page.locator('details.advanced > summary').click();
+	await page.locator('details.advanced input[placeholder="sprint = 2 week"]').fill('stride = 2 day');
+	await page.getByRole('button', { name: 'Add', exact: true }).click();
+	await expect(page.locator('.chip')).toContainText('stride');
+	await expect(page.getByRole('cell', { name: '10 day', exact: true })).toBeVisible();
+
+	await page.locator('input[type="file"][accept=".sqlite"]').setInputFiles(backupPath);
+	await expect(page.locator('.gutter .row .txt').first()).toContainText('30.4');
+	await expect(page.getByRole('button', { name: 'System', exact: true })).toHaveAttribute('aria-pressed', 'true');
+	await expect(page.getByRole('tab', { name: 'Notepad' })).toHaveAttribute('aria-selected', 'true');
+	await expect(page.locator('[aria-label="custom units"] .chip')).toHaveCount(0);
+});
 test('exports a versioned JSON backup containing the sheet', async ({ page }) => {
 	await loadSheet(page, 'rent = 1800 $', 'Budget');
 	await openSettings(page);

@@ -215,6 +215,7 @@ test.describe('onboarding: errors link to the cheat sheet', () => {
 	test('the empty gutter fills its column rather than collapsing', async ({ page }) => {
 		await page.goto(`/#${shareHash('')}`);
 		await page.locator('.cm-editor').first().waitFor({ state: 'visible' });
+		await expect(page.locator('.pad .empty')).toBeVisible();
 
 		const widths = await page.evaluate(() => {
 			const w = (s: string) => {
@@ -232,13 +233,14 @@ test.describe('onboarding: errors link to the cheat sheet', () => {
 	test('the onboarding text clears the line-number gutter', async ({ page }) => {
 		await page.goto(`/#${shareHash('')}`);
 		await page.locator('.cm-editor').first().waitFor({ state: 'visible' });
+		await expect(page.locator('.pad .empty')).toBeVisible();
 
 		const edges = await page.evaluate(() => {
 			const r = (s: string) => {
 				const el = document.querySelector(s) as HTMLElement | null;
 				return el ? el.getBoundingClientRect() : null;
 			};
-			return { gutterRight: r('.cm-gutters')?.right ?? 0, overlayLeft: r('.empty')?.left ?? 0 };
+			return { gutterRight: r('.cm-gutters')?.right ?? 0, overlayLeft: r('.pad .empty')?.left ?? 0 };
 		});
 		expect(edges.overlayLeft).toBeGreaterThanOrEqual(edges.gutterRight);
 	});

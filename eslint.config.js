@@ -20,7 +20,15 @@ const svelteOnly = svelte.configs.recommended
 
 export default tseslint.config(
   {
-    ignores: ['.svelte-kit/', 'build/', 'dist/', 'node_modules/', 'static/', '**/*.md']
+    ignores: [
+      '.worktrees/',
+      '.svelte-kit/',
+      'build/',
+      'dist/',
+      'node_modules/',
+      'static/',
+      '**/*.md'
+    ]
   },
   ...svelteOnly,
   {

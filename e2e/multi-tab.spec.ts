@@ -25,8 +25,9 @@ test('a second tab degrades to in-memory and warns instead of crashing', async (
 		)
 		.toBe(1);
 
-	// And the degraded tab is still usable — the engine evaluates and renders
-	// results (the starter sheet computes), it just won't persist.
+	// The fallback must still evaluate user input, independently of whichever
+	// starter sheet is bundled with the app.
 	const degraded = (await tab1.locator('.ephemeral-banner').count()) ? tab1 : tab2;
-	await expect(degraded.locator('.gutter')).toContainText('req');
+	await degraded.locator('.cm-content').first().fill('rate = 3 req/s');
+	await expect(degraded.locator('.gutter')).toContainText('3 req/s');
 });

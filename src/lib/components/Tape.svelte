@@ -1,28 +1,41 @@
 <script lang="ts">
+import { onDestroy, onMount } from 'svelte';
 import { astText, type LineResult, type NumberFormat } from '$lib/engine';
-import type { EngineClient } from '$lib/engine/client';
+import { EngineClient } from '$lib/engine/client';
 import { type TapeOp, type TapeRow, tapePrefix, tapeSheet } from '$lib/tape';
 import Sparkline from './Sparkline.svelte';
 
-// Tape mode: a running value with stacked operation rows. The tape
-// compiles to the same expression the engine evaluates — no second engine.
+// Tape owns a separate worker so evaluations cannot replace Notepad's inspector
+// snapshot. Its worker is disposed with this component on mode switches.
 let {
-	engine,
 	seed,
 	samples,
 	numberFormat = 'auto',
+	monthDays,
+	yearDays,
+	confidence,
 	customUnits = {},
 	showAst = false,
 	onexpr
 }: {
-	engine: EngineClient;
 	seed: number;
 	samples: number;
 	numberFormat?: NumberFormat;
+	monthDays: number;
+	yearDays: number;
+	confidence: number;
 	customUnits?: Record<string, string>;
 	showAst?: boolean;
 	onexpr: (expr: string, append: boolean) => void;
 } = $props();
+
+let engine = $state<EngineClient>();
+let disposed = false;
+onMount(() => { engine = new EngineClient(); });
+onDestroy(() => {
+	disposed = true;
+	engine?.destroy();
+});
 
 let rows = $state<TapeRow[]>([{ op: '=', operand: '1000 req/s' }]);
 let running = $state<LineResult[]>([]);
@@ -60,16 +73,29 @@ async function copyRow(i: number) {
 }
 
 async function recompute() {
-	if (!engine) return;
-	running = (
-		await engine.evalSheet(tapeSheet(rows), { seed, N: samples, numberFormat }, customUnits)
-	).lines;
+	if (!engine || disposed) return;
+	const revision = ++evaluationRevision;
+	try {
+		const result = await engine.evalSheet(
+			tapeSheet(rows),
+			{ seed, N: samples, numberFormat, monthDays, yearDays, confidence },
+			customUnits
+		);
+		if (!disposed && revision === evaluationRevision) running = result.lines;
+	} catch {
+		// The owned worker may be disposed while an evaluation is in flight.
+	}
 }
+let evaluationRevision = 0;
 
 $effect(() => {
 	void JSON.stringify(rows);
 	void seed;
+	void samples;
 	void numberFormat;
+	void monthDays;
+	void yearDays;
+	void confidence;
 	void customUnits;
 	recompute();
 });

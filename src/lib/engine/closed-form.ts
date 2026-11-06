@@ -22,7 +22,9 @@ import type { Dimension, Value, ValueMeta } from './value';
 // layer promises — while structural coupling (variable reuse, `correlate`)
 // clears the floor and is carried into the combined moment.
 function structuralCorr(a: Float64Array, b: Float64Array): number {
+  if (a === b) return 1;
   const r = correlation(a, b);
+  if (Number.isFinite(r) && Math.abs(r) >= 1 - 1e-12) return r;
   return Math.abs(r) < 4 / Math.sqrt(a.length) ? 0 : r;
 }
 
@@ -30,6 +32,7 @@ function structuralCorr(a: Float64Array, b: Float64Array): number {
 // lognormal product/ratio's spread (X = exp(A), so it is corr(A, B)). Samples
 // are positive by construction, so the log is finite.
 function structuralLogCorr(a: Float64Array, b: Float64Array): number {
+  if (a === b) return 1;
   const n = Math.min(a.length, b.length);
   const la = new Float64Array(n);
   const lb = new Float64Array(n);
@@ -166,10 +169,10 @@ export function analyticalMode(v: Value): number | null {
       const span = v.meta.hi - v.meta.lo;
       return v.meta.lo + ((v.meta.alpha - 1) * span) / 4;
     }
-    case 'binomial':
-      // The largest integer ≤ (n+1)p (two adjacent modes when (n+1)p is an
-      // integer; we report the lower, matching ⌊(n+1)p⌋).
-      return Math.floor((v.meta.n + 1) * v.meta.p);
+    case 'binomial': {
+      // ⌊(n+1)p⌋ selects a mode; at p = 1 it must be clamped to n.
+      return Math.min(v.meta.n, Math.floor((v.meta.n + 1) * v.meta.p));
+    }
     case 'weibull':
       // λ·((k−1)/k)^(1/k) for k > 1; the density peaks at 0 for k ≤ 1.
       return v.meta.shape > 1

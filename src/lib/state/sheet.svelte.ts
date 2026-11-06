@@ -13,7 +13,14 @@
 import { replaceState } from '$app/navigation';
 import { DbClient, type RevisionItem, type SheetListItem } from '$lib/db/client';
 import { setLineConversion } from '$lib/editor';
-import type { LineResult, NumberFormat, RatePeriod } from '$lib/engine';
+import {
+  isValidCalendarDays,
+  isValidConfidence,
+  isValidSampleCount,
+  type LineResult,
+  type NumberFormat,
+  type RatePeriod
+} from '$lib/engine';
 import { EngineClient } from '$lib/engine/client';
 import { decodeShare, encodeShare } from '$lib/share';
 import { buildExport, type CalcyExport, importSummary, validateImport } from '$lib/sheet/backup';
@@ -123,6 +130,9 @@ export class SheetController {
   // slow boot can't fire a debounced save of the constructor defaults (the
   // starter-template body under a throwaway id) before the real sheet is adopted.
   private booted = false;
+  private savingPaused = $state(false);
+  private evaluationRevision = 0;
+  private disposed = false;
 
   private evalTimer: ReturnType<typeof setTimeout> | undefined;
   private saveTimer: ReturnType<typeof setTimeout> | undefined;
@@ -143,6 +153,8 @@ export class SheetController {
   constructor() {
     // Live evaluation, debounced ~120 ms.
     $effect(() => {
+      this.evaluationRevision++;
+      void this.sheetId;
       void this.body;
       void this.seed;
       void this.samples;
@@ -159,8 +171,8 @@ export class SheetController {
       void this.body;
       void this.title;
       void this.seed;
-      if (!this.db || !this.booted) return;
       clearTimeout(this.saveTimer);
+      if (!this.db || !this.booted || this.savingPaused) return;
       this.saveTimer = setTimeout(() => this.persistSheet(), 700);
     });
     // Reset the pin input when the cursor moves to another line.
@@ -188,24 +200,7 @@ export class SheetController {
     this.engine.unitNames().then((n) => (this.unitNames = n));
     await this.db.ready;
     this.ephemeral = !this.db.persistent;
-    const settings = parseSettings(await this.db.getSettings());
-    if (settings.monthDays !== undefined) this.monthDays = settings.monthDays;
-    if (settings.yearDays !== undefined) this.yearDays = settings.yearDays;
-    if (settings.samples !== undefined) this.samples = settings.samples;
-    if (settings.numberFormat) this.numberFormat = settings.numberFormat;
-    if (settings.confidence !== undefined) this.confidence = settings.confidence;
-    if (settings.mode) this.mode = settings.mode;
-    if (settings.theme) this.theme = settings.theme;
-    if (settings.layout) {
-      this.editorWidth = settings.layout.editor;
-      this.gutterWidth = settings.layout.gutter;
-      this.inspectorWidth = settings.layout.inspector;
-      this.editorCollapsed = settings.layout.editorCollapsed;
-      this.gutterCollapsed = settings.layout.gutterCollapsed;
-      this.inspectorCollapsed = settings.layout.inspectorCollapsed;
-    }
-    this.debugAst = settings.debugAst;
-    this.customUnits = await this.db.customUnits();
+    await this.reloadSettingsAndUnits();
     // A shared sheet in the URL fragment takes precedence over the last sheet.
     const shared = location.hash.length > 1 ? decodeShare(location.hash.slice(1)) : null;
     if (shared) {
@@ -228,6 +223,10 @@ export class SheetController {
   }
 
   destroy() {
+    this.disposed = true;
+    this.evaluationRevision++;
+    clearTimeout(this.evalTimer);
+    clearTimeout(this.saveTimer);
     this.engine?.destroy();
     this.systemDarkQuery?.removeEventListener('change', this.onSystemDarkChange);
   }
@@ -258,8 +257,8 @@ export class SheetController {
   // before switching sheet identity (new/open/template) so the current sheet's
   // last sub-debounce edits land in its row rather than surviving only as a
   // revision snapshot the user has to dig out of history.
-  private async flushSave() {
-    if (!this.db) return;
+  private async flushSave(): Promise<boolean> {
+    if (!this.db) return false;
     clearTimeout(this.saveTimer);
     this.saveTimer = undefined;
     try {
@@ -270,31 +269,45 @@ export class SheetController {
         seed: this.seed
       });
       this.saveError = false;
+      return true;
     } catch {
       this.saveError = true;
+      return false;
     }
   }
 
   async runEval() {
-    if (!this.engine) return;
+    if (!this.engine || this.disposed) return;
+    const revision = ++this.evaluationRevision;
+    const sheetId = this.sheetId;
+    const body = this.body;
     try {
-      this.results = (
-        await this.engine.evalSheet(
-          this.body,
-          {
-            seed: this.seed,
-            N: this.samples,
-            monthDays: this.monthDays,
-            yearDays: this.yearDays,
-            numberFormat: this.numberFormat,
-            confidence: this.confidence
-          },
-          this.customUnits
-        )
-      ).lines;
+      const result = await this.engine.evalSheet(
+        body,
+        {
+          seed: this.seed,
+          N: this.samples,
+          monthDays: this.monthDays,
+          yearDays: this.yearDays,
+          numberFormat: this.numberFormat,
+          confidence: this.confidence
+        },
+        this.customUnits
+      );
+      const names = await this.engine.unitNames();
+      if (
+        this.disposed ||
+        revision !== this.evaluationRevision ||
+        sheetId !== this.sheetId ||
+        body !== this.body
+      )
+        return;
+      this.results = result.lines;
+      this.unitNames = names;
       this.evalTick++;
       this.evalError = '';
     } catch (e) {
+      if (this.disposed || revision !== this.evaluationRevision) return;
       // A broken custom unit can fail engine construction for the whole sheet.
       this.evalError = e instanceof Error ? e.message : String(e);
     }
@@ -317,7 +330,7 @@ export class SheetController {
 
   async newSheet() {
     if (!this.db) return;
-    await this.flushSave(); // commit pending edits to the current sheet first
+    if (!(await this.flushSave())) return; // do not switch away after a failed save
     await this.db.snapshot(this.sheetId, this.body); // snapshot before leaving
     this.sheetId = crypto.randomUUID();
     this.title = 'Untitled';
@@ -333,7 +346,7 @@ export class SheetController {
       this.showSheets = false;
       return;
     }
-    await this.flushSave(); // commit pending edits to the current sheet first
+    if (!(await this.flushSave())) return;
     await this.db.snapshot(this.sheetId, this.body);
     const data = await this.db.loadSheet(id);
     if (data) this.adopt(data);
@@ -343,17 +356,19 @@ export class SheetController {
   async deleteSheet(id: string) {
     if (!this.db) return;
     if (!confirm('Delete this sheet? This cannot be undone.')) return;
-    await this.db.delete(id);
-    if (id === this.sheetId) {
-      const last = await this.db.loadLast();
-      if (last) this.adopt(last);
-      else {
-        this.sheetId = crypto.randomUUID();
-        this.title = 'Untitled';
-        this.body = '';
+    this.savingPaused = true;
+    clearTimeout(this.saveTimer);
+    try {
+      await this.db.delete(id);
+      if (id === this.sheetId) {
+        const last = await this.db.loadLast();
+        if (last) this.adopt(last);
+        else await this.startFreshSheet();
       }
+      await this.refreshSheets();
+    } finally {
+      this.savingPaused = false;
     }
-    await this.refreshSheets();
   }
 
   async renameSheet(id: string) {
@@ -408,7 +423,7 @@ export class SheetController {
       this.loadTemplate(t);
       return;
     }
-    await this.flushSave(); // commit pending edits to the current sheet first
+    if (!(await this.flushSave())) return;
     await this.db.snapshot(this.sheetId, this.body);
     this.sheetId = crypto.randomUUID();
     this.title = t.title;
@@ -428,31 +443,28 @@ export class SheetController {
     }
     const trial = { ...this.customUnits, [parsed.name]: parsed.definition };
     try {
-      // Validate by building an engine with the unit and using it once.
-      await this.engine?.evalSheet(
-        `1 ${parsed.name}`,
-        { monthDays: this.monthDays, yearDays: this.yearDays },
-        trial
-      );
+      // The DB worker validates the complete dependency set before writing.
+      // Never evaluate a trial sheet in the active inspector's engine.
+      if (!this.db) throw new Error('database is not ready');
+      await this.db.setCustomUnit(parsed.name, parsed.definition);
     } catch (e) {
       this.unitError = `invalid: ${e instanceof Error ? e.message : String(e)}`;
       return;
     }
     this.customUnits = trial;
-    this.db?.setCustomUnit(parsed.name, parsed.definition).catch(() => {
-      this.saveError = true;
-    });
     this.newUnit = '';
     this.unitError = '';
-    this.engine?.unitNames().then((n) => (this.unitNames = n));
   }
 
-  removeCustomUnit(name: string) {
-    const { [name]: _drop, ...rest } = this.customUnits;
-    this.customUnits = rest;
-    this.db?.deleteCustomUnit(name).catch(() => {
-      this.saveError = true;
-    });
+  async removeCustomUnit(name: string) {
+    try {
+      await this.db?.deleteCustomUnit(name);
+      const { [name]: _drop, ...rest } = this.customUnits;
+      this.customUnits = rest;
+      this.unitError = '';
+    } catch (error) {
+      this.unitError = `Cannot remove '${name}': ${error instanceof Error ? error.message : String(error)}`;
+    }
   }
 
   // --- revision history -----------------------------------------------------
@@ -560,29 +572,53 @@ export class SheetController {
 
   async exportDb() {
     if (!this.db) return;
-    const bytes = await this.db.export();
-    this.download('calcy.sqlite', bytes as BlobPart, 'application/x-sqlite3');
+    if (!(await this.flushSave())) {
+      this.setDataMessage('Could not export: latest sheet edits could not be saved.', true);
+      return;
+    }
+    try {
+      const bytes = await this.db.export();
+      this.download('calcy.sqlite', bytes as BlobPart, 'application/x-sqlite3');
+    } catch (e) {
+      this.setDataMessage(this.dataErrorText(e, 'Could not export.'), true);
+    }
   }
 
   async importDb(file: File) {
     if (!this.db) return;
-    // Drop any pending autosave of the current (pre-import) sheet: import
-    // replaces the whole database, so a late write would inject stale rows
-    // into the freshly-imported data.
+    if (!(await this.flushSave())) return;
+    this.savingPaused = true;
     clearTimeout(this.saveTimer);
     this.saveTimer = undefined;
-    const bytes = new Uint8Array(await file.arrayBuffer());
-    await this.db.import(bytes);
-    const last = await this.db.loadLast();
-    if (last) this.adopt(last);
-    await this.refreshSheets();
+    try {
+      const bytes = new Uint8Array(await file.arrayBuffer());
+      await this.db.import(bytes);
+      await this.reloadSettingsAndUnits(true);
+      const last = await this.db.loadLast();
+      if (last) this.adopt(last);
+      else await this.startFreshSheet();
+      await this.refreshSheets();
+      await this.runEval();
+      this.setDataMessage('Imported database.');
+    } catch (error) {
+      this.setDataMessage(
+        `Could not import that database: ${this.dataErrorText(error, 'unknown error')}`,
+        true
+      );
+    } finally {
+      this.ephemeral = !this.db.persistent;
+      this.savingPaused = false;
+    }
   }
 
   // --- versioned JSON backup / restore + destructive ops --------------------
   async exportJson() {
     if (!this.db) return;
     try {
-      await this.flushSave(); // ensure the current sheet's latest edits are included
+      if (!(await this.flushSave())) {
+        this.setDataMessage('Could not export: latest sheet edits could not be saved.', true);
+        return;
+      }
       const doc = buildExport(await this.db.exportData(), new Date().toISOString());
       this.download('calcy-backup.json', JSON.stringify(doc, null, 2), 'application/json');
       this.setDataMessage(`Exported ${importSummary(doc)}.`);
@@ -707,16 +743,37 @@ export class SheetController {
     this.theme = 'system';
   }
 
-  // Re-read content settings + custom units from the DB (after a merge import).
-  private async reloadSettingsAndUnits() {
+  // Hydrate persisted settings and custom units. Replacement imports reset
+  // first so absent keys in the new database resolve to application defaults;
+  // merge imports retain live values for keys not present in the database.
+  private async reloadSettingsAndUnits(resetMissing = false) {
     if (!this.db) return;
+    if (resetMissing) {
+      this.applyDefaultSettings();
+      this.mode = 'notepad';
+      this.editorWidth = DEFAULT_LAYOUT_EDITOR;
+      this.gutterWidth = DEFAULT_LAYOUT_GUTTER;
+      this.inspectorWidth = DEFAULT_LAYOUT_INSPECTOR;
+      this.editorCollapsed = false;
+      this.gutterCollapsed = false;
+      this.inspectorCollapsed = false;
+    }
     const s = parseSettings(await this.db.getSettings());
     if (s.monthDays !== undefined) this.monthDays = s.monthDays;
     if (s.yearDays !== undefined) this.yearDays = s.yearDays;
     if (s.samples !== undefined) this.samples = s.samples;
     if (s.numberFormat) this.numberFormat = s.numberFormat;
     if (s.confidence !== undefined) this.confidence = s.confidence;
+    if (s.mode) this.mode = s.mode;
     if (s.theme) this.theme = s.theme;
+    if (s.layout) {
+      this.editorWidth = s.layout.editor;
+      this.gutterWidth = s.layout.gutter;
+      this.inspectorWidth = s.layout.inspector;
+      this.editorCollapsed = s.layout.editorCollapsed;
+      this.gutterCollapsed = s.layout.gutterCollapsed;
+      this.inspectorCollapsed = s.layout.inspectorCollapsed;
+    }
     this.debugAst = s.debugAst;
     this.customUnits = await this.db.customUnits();
   }
@@ -726,6 +783,17 @@ export class SheetController {
     this.db?.setSetting(key, value).catch(() => {
       this.saveError = true;
     });
+  }
+  setSamples(count: number) {
+    if (!isValidSampleCount(count)) return;
+    this.samples = count;
+    this.persistSetting('samples', String(count));
+  }
+
+  setCalendarDays(key: 'monthDays' | 'yearDays', days: number) {
+    if (!isValidCalendarDays(days)) return;
+    this[key] = days;
+    this.persistSetting(key, String(days));
   }
 
   setMode(mode: 'notepad' | 'tape') {
@@ -744,7 +812,7 @@ export class SheetController {
   }
 
   setConfidence(c: number) {
-    if (!(c > 0 && c < 1)) return;
+    if (!isValidConfidence(c)) return;
     this.confidence = c;
     this.persistSetting('confidence', String(c));
   }

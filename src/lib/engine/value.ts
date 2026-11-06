@@ -68,7 +68,7 @@ export interface Value {
   // `km/h`, `GB/s`). The magnitude itself stays in canonical base units — this
   // only chooses how the result is rendered, exactly as an explicit `in <unit>`
   // would. Propagated through arithmetic by the evaluator and surfaced as the
-  // pinned unit at the line root when no `in/to` is present. Dropped whenever a
+  // pinned unit at the line root when no `in` is present. Dropped whenever a
   // dimension cancels (rate × time → count), since then there is no clean typed
   // unit to show. See [unitsCancel] / [composeHint] in eval.ts.
   unitHint?: UnitHint;

@@ -71,7 +71,7 @@ function pick(e: Event, handler: (f: File) => void) {
 
 	<div class="grp" role="group" aria-label="sampling">
 		<span class="grp-label">sampling</span>
-		<label>N <input type="number" step="1000" bind:value={c.samples} onchange={() => c.persistSetting('samples', String(c.samples))} /></label>
+		<label>N <input type="number" min="1" step="1" value={c.samples} onchange={(e) => { c.setSamples(e.currentTarget.valueAsNumber); e.currentTarget.value = String(c.samples); }} /></label>
 		<span class="muted">all compute is local</span>
 	</div>
 
@@ -82,8 +82,8 @@ function pick(e: Event, handler: (f: File) => void) {
 		<div class="adv-row">
 			<div class="grp">
 				<span class="grp-label">calendar</span>
-				<label>month <input type="number" step="any" value={trim(c.monthDays)} onchange={(e) => { c.monthDays = +e.currentTarget.value; c.persistSetting('monthDays', String(c.monthDays)); }} /> d</label>
-				<label>year <input type="number" step="any" value={trim(c.yearDays)} onchange={(e) => { c.yearDays = +e.currentTarget.value; c.persistSetting('yearDays', String(c.yearDays)); }} /> d</label>
+				<label>month <input type="number" min="0" step="any" value={trim(c.monthDays)} onchange={(e) => { c.setCalendarDays('monthDays', e.currentTarget.valueAsNumber); e.currentTarget.value = String(trim(c.monthDays)); }} /> d</label>
+				<label>year <input type="number" min="0" step="any" value={trim(c.yearDays)} onchange={(e) => { c.setCalendarDays('yearDays', e.currentTarget.valueAsNumber); e.currentTarget.value = String(trim(c.yearDays)); }} /> d</label>
 			</div>
 
 			<span class="divider" aria-hidden="true"></span>

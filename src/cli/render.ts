@@ -29,7 +29,24 @@ function grid(result: SheetResult): string[][] {
 }
 
 export function renderMarkdown(result: SheetResult): string {
-  return markdownTable(grid(result));
+  return markdownTable(grid(result).map((row) => row.map(escapeCell)));
+}
+
+function escapeCell(value: string): string {
+  return value
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('\\', '&#92;')
+    .replaceAll('`', '&#96;')
+    .replaceAll('*', '&#42;')
+    .replaceAll('_', '&#95;')
+    .replaceAll('~', '&#126;')
+    .replaceAll('[', '&#91;')
+    .replaceAll(']', '&#93;')
+    .replaceAll('(', '&#40;')
+    .replaceAll(')', '&#41;')
+    .replaceAll('|', '&#124;');
 }
 
 export function renderTable(result: SheetResult): string {

@@ -5,6 +5,8 @@
 // deterministically on load, never stored as samples.
 
 import sqlite3InitModule, { type Database, type Sqlite3Static } from '@sqlite.org/sqlite-wasm';
+import { DEFAULT_OPTIONS, Engine } from '../engine';
+import { parseSettings } from '../sheet/settings';
 
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS sheet (
@@ -177,6 +179,7 @@ function getCustomUnits(): Record<string, string> {
 }
 
 function setCustomUnit(name: string, definition: string) {
+  validateUnits({ ...getCustomUnits(), [name]: definition }, getSettings());
   db.exec({
     sql: `INSERT INTO custom_unit (name, definition) VALUES ($n, $d)
 		      ON CONFLICT(name) DO UPDATE SET definition=$d`,
@@ -185,6 +188,8 @@ function setCustomUnit(name: string, definition: string) {
 }
 
 function deleteCustomUnit(name: string) {
+  const { [name]: _removed, ...remaining } = getCustomUnits();
+  validateUnits(remaining, getSettings());
   db.exec({ sql: 'DELETE FROM custom_unit WHERE name = $n', bind: { $n: name } });
 }
 
@@ -209,11 +214,174 @@ function exportBytes(): Uint8Array {
   return sqlite3.capi.sqlite3_js_db_export(ptr);
 }
 
-async function importBytes(bytes: Uint8Array) {
+// Tables and columns every calcy database must have. The FTS index is derived
+// from `sheet`, so it is (re)created by migrate() and is not required.
+const REQUIRED_SCHEMA: Record<string, string[]> = {
+  sheet: ['id', 'title', 'body', 'seed', 'created_at', 'updated_at'],
+  sheet_revision: ['id', 'sheet_id', 'body', 'saved_at'],
+  custom_unit: ['name', 'definition'],
+  setting: ['key', 'value']
+};
+
+// Run a query against an arbitrary handle (the live DB or a scratch copy).
+function query(handle: Database, sql: string): Record<string, unknown>[] {
+  return handle.exec({ sql, rowMode: 'object', returnValue: 'resultRows' }) as unknown as Record<
+    string,
+    unknown
+  >[];
+}
+
+// Open the candidate bytes in a throwaway in-memory database so they can be
+// checked *before* the live database is touched. `sqlite3_deserialize` takes
+// ownership of the buffer (SQLITE_DESERIALIZE_FREEONCLOSE), so it must be
+// allocated with sqlite3_malloc — wasm.alloc() does exactly that.
+function openScratch(bytes: Uint8Array): Database {
+  const scratch = new sqlite3.oo1.DB(':memory:', 'c');
+  const dbPointer = scratch.pointer;
+  if (dbPointer == null) throw new Error('could not open a database for validation');
+  // SQLite recommends 20 bytes of padding when deserializing untrusted data.
+  const capacity = bytes.byteLength + 20;
+  const ptr = sqlite3.wasm.alloc(capacity);
+  const heap = sqlite3.wasm.heap8u();
+  heap.set(bytes, ptr);
+  heap.fill(0, ptr + bytes.byteLength, ptr + capacity);
+  const rc = sqlite3.capi.sqlite3_deserialize(
+    dbPointer,
+    'main',
+    ptr,
+    bytes.byteLength,
+    capacity,
+    1 | 2 // SQLITE_DESERIALIZE_FREEONCLOSE | SQLITE_DESERIALIZE_RESIZEABLE
+  );
+  if (rc !== 0) {
+    // FREEONCLOSE also frees the buffer on a failed deserialize.
+    scratch.close();
+    throw new Error('that file is not a calcy database');
+  }
+  return scratch;
+}
+
+// Validate the candidate bytes without touching the live database: the file
+// must be a readable SQLite database, pass its integrity check, carry the
+// calcy schema, and expose its custom units and settings for the caller to
+// check before anything is replaced.
+function inspectBytes(bytes: Uint8Array): void {
+  if (bytes.byteLength < 512) throw new Error('that file is too small to be a calcy database');
+  const header = new TextDecoder().decode(bytes.subarray(0, 15));
+  if (header !== 'SQLite format 3') throw new Error('that file is not an SQLite database');
+  const scratch = openScratch(bytes);
+  try {
+    const integrity = query(scratch, 'PRAGMA integrity_check')[0]?.integrity_check;
+    if (integrity !== 'ok') throw new Error('imported database failed its integrity check');
+    const version = (query(scratch, 'PRAGMA user_version')[0]?.user_version as number) ?? 0;
+    if (version > Math.max(SCHEMA_BASELINE, ...Object.keys(MIGRATIONS).map(Number)))
+      throw new Error('that database was made by a newer version of calcy');
+    for (const [table, columns] of Object.entries(REQUIRED_SCHEMA)) {
+      const present = query(scratch, `PRAGMA table_info(${table})`).map((r) => r.name as string);
+      if (!present.length) throw new Error(`imported database is missing the ${table} table`);
+      const missing = columns.filter((c) => !present.includes(c));
+      if (missing.length)
+        throw new Error(
+          `imported database is missing the ${table}.${missing.join(', ')} column(s)`
+        );
+    }
+    for (const row of query(
+      scratch,
+      'SELECT id, title, body, seed, created_at, updated_at FROM sheet'
+    )) {
+      if (
+        typeof row.id !== 'string' ||
+        !row.id ||
+        typeof row.title !== 'string' ||
+        typeof row.body !== 'string' ||
+        ![row.seed, row.created_at, row.updated_at].every(
+          (value) => typeof value === 'number' && Number.isFinite(value)
+        )
+      )
+        throw new Error('invalid sheet row in imported database');
+    }
+    for (const row of query(scratch, 'SELECT id, sheet_id, body, saved_at FROM sheet_revision')) {
+      if (
+        typeof row.id !== 'number' ||
+        !Number.isSafeInteger(row.id) ||
+        typeof row.sheet_id !== 'string' ||
+        typeof row.body !== 'string' ||
+        typeof row.saved_at !== 'number' ||
+        !Number.isFinite(row.saved_at)
+      )
+        throw new Error('invalid revision row in imported database');
+    }
+    const custom_units: Record<string, string> = {};
+    for (const r of query(scratch, 'SELECT name, definition FROM custom_unit ORDER BY rowid'))
+      if (typeof r.name !== 'string' || typeof r.definition !== 'string')
+        throw new Error('invalid custom unit row');
+      else custom_units[r.name] = r.definition;
+    const settings: Record<string, string> = {};
+    for (const r of query(scratch, 'SELECT key, value FROM setting ORDER BY rowid'))
+      if (typeof r.key !== 'string' || typeof r.value !== 'string')
+        throw new Error('invalid setting row');
+      else settings[r.key] = r.value;
+    validateUnits(custom_units, settings);
+  } catch (error) {
+    throw new Error(
+      `that file is not a valid calcy database: ${error instanceof Error ? error.message : String(error)}`
+    );
+  } finally {
+    scratch.close();
+  }
+}
+
+function validateUnits(units: Record<string, string>, settings: Record<string, string>): void {
+  const parsed = parseSettings(settings);
+  new Engine(
+    {
+      monthDays: parsed.monthDays ?? DEFAULT_OPTIONS.monthDays,
+      yearDays: parsed.yearDays ?? DEFAULT_OPTIONS.yearDays
+    },
+    units
+  );
+}
+
+// Replace the live database with `bytes`, keeping an exact copy so a failed
+// write or a failed post-import check restores the previous database instead of
+// leaving an unusable file behind.
+async function replaceBytes(bytes: Uint8Array) {
   if (!pool) throw new Error('import is unavailable here — calcy is open in another tab');
+  inspectBytes(bytes);
+  const original = await pool.exportFile(DB_PATH);
   db.close();
-  await pool.importDb(DB_PATH, bytes);
-  db = new pool.OpfsSAHPoolDb(DB_PATH);
+  try {
+    await pool.importDb(DB_PATH, bytes);
+    db = new pool.OpfsSAHPoolDb(DB_PATH);
+    migrate();
+    const integrity = rows('PRAGMA integrity_check')[0]?.integrity_check;
+    if (integrity !== 'ok') throw new Error('imported database failed SQLite integrity check');
+    for (const [table, columns] of Object.entries(REQUIRED_SCHEMA)) {
+      const present = rows(`PRAGMA table_info(${table})`).map((r) => r.name as string);
+      const missing = columns.filter((c) => !present.includes(c));
+      if (missing.length)
+        throw new Error(
+          `imported database is missing the ${table}.${missing.join(', ')} column(s)`
+        );
+    }
+  } catch (error) {
+    try {
+      db.close();
+    } catch {
+      // The pool import itself may fail before a replacement DB is opened.
+    }
+    try {
+      await pool.importDb(DB_PATH, original);
+      db = new pool.OpfsSAHPoolDb(DB_PATH);
+    } catch (restoreError) {
+      db = openScratch(original);
+      pool = undefined;
+      throw new Error(
+        `Could not restore on-device storage; original data is available in this tab. Export a backup. ${String(restoreError)}`
+      );
+    }
+    throw error;
+  }
 }
 
 // The three tables a JSON backup carries (the shell wraps these in the
@@ -243,6 +411,7 @@ function importData(d: {
   custom_units: Record<string, string>;
   settings: Record<string, string>;
 }) {
+  validateUnits({ ...d.custom_units, ...getCustomUnits() }, { ...d.settings, ...getSettings() });
   db.exec('BEGIN');
   try {
     for (const s of d.sheets) {
@@ -298,7 +467,12 @@ async function wipeStorage() {
   migrate();
 }
 
-self.onmessage = async (e: MessageEvent) => {
+let requests = Promise.resolve();
+self.onmessage = (e: MessageEvent) => {
+  requests = requests.then(() => handleMessage(e));
+};
+
+async function handleMessage(e: MessageEvent) {
   const { id, type, payload } = e.data;
   try {
     let result: unknown = null;
@@ -352,7 +526,7 @@ self.onmessage = async (e: MessageEvent) => {
         result = exportBytes();
         break;
       case 'import':
-        await importBytes(payload.bytes);
+        await replaceBytes(payload.bytes);
         break;
       case 'exportData':
         result = exportData();
@@ -370,11 +544,12 @@ self.onmessage = async (e: MessageEvent) => {
         await wipeStorage();
         break;
     }
-    (self as unknown as Worker).postMessage({ id, result });
+    (self as unknown as Worker).postMessage({ id, result, persistent: Boolean(pool) });
   } catch (err) {
     (self as unknown as Worker).postMessage({
       id,
+      persistent: Boolean(pool),
       error: err instanceof Error ? err.message : String(err)
     });
   }
-};
+}

@@ -23,6 +23,16 @@ describe('word numbers', () => {
     expect(num('one thousand two hundred')).toBe(1200);
   });
 
+  it.each([
+    'hundred',
+    'thousand',
+    'million',
+    'billion'
+  ])('retains explicit zero before %s', (scale) => {
+    expect(num(`zero ${scale}`)).toBe(0);
+    expect(num(`zero ${scale} five`)).toBe(5);
+  });
+
   it('absorbs British "and" after a scale word (numutil-style)', () => {
     expect(num('two hundred and fifty')).toBe(250);
     expect(num('one thousand and one')).toBe(1001);

@@ -30,7 +30,8 @@ export class DbClient {
   constructor() {
     this.worker = new Worker(new URL('./worker.ts', import.meta.url), { type: 'module' });
     this.worker.onmessage = (e: MessageEvent) => {
-      const { id, error, result } = e.data;
+      const { id, error, result, persistent } = e.data;
+      if (typeof persistent === 'boolean') this.persistent = persistent;
       const p = this.pending.get(id);
       if (!p) return;
       this.pending.delete(id);

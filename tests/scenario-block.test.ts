@@ -96,6 +96,36 @@ describe('scenario <axis>: table block', () => {
   });
 });
 
+it('expands tab indentation and accepts tab-separated cells', () => {
+  const sheet = '  scenario:\n\t# low high\n\tv = 1 + 2\t3 + 4\tkm\nv in m';
+  expect(cellsOf(sheet, 'v')).toEqual([3000, 7000]);
+  const downstream = lines(sheet, OPTS).at(-1);
+  expect(downstream?.error).toBeUndefined();
+  expect(downstream?.display?.unit).toBe('m');
+});
+
+describe('scenario shared-unit expression precedence', () => {
+  it('applies one trailing unit after parenthesizing every cell expression', () => {
+    const sheet = [
+      'scenario case:',
+      '  #      low       high',
+      '  ratio = 1 / 2     3 / 4    m'
+    ].join('\n');
+    expect(cellsOf(sheet, 'ratio')).toEqual([0.5, 0.75]);
+  });
+});
+
+it('keeps addition, negatives, and where expressions inside each shared-unit cell', () => {
+  const sheet = [
+    'scenario case:',
+    '  #       low                  high',
+    '  result = 1 + 2              - (2 + 2)    m',
+    '  local  = a + 1 where a = 2  b + 1 where b = 3  m'
+  ].join('\n');
+  expect(cellsOf(sheet, 'result')).toEqual([3, -4]);
+  expect(cellsOf(sheet, 'local')).toEqual([3, 4]);
+});
+
 describe('scenario <axis>: table block — errors', () => {
   it('requires a coord header row before the data rows', () => {
     const sheet = ['scenario case:', '  price = 8     10     14'].join('\n');
@@ -110,4 +140,29 @@ describe('scenario <axis>: table block — errors', () => {
     const row = lines(sheet, OPTS).find((r) => r.raw.includes('price'));
     expect(row?.error).toMatch(/cell|coord|3/i);
   });
+});
+
+it('applies a shared scaled unit to whole uncertain cell expressions', () => {
+  const sheet = [
+    'scenario case:',
+    '  #          low           high',
+    '  distance = 10 / 2       20 / 2       km',
+    '  estimate = 1 to 3       2 to 6       km'
+  ].join('\n');
+  expect(cellsOf(sheet, 'distance')).toEqual([5000, 10000]);
+  const rows = lines(sheet, OPTS);
+  const distance = rows.find((row) => row.name === 'distance');
+  const estimate = rows.find((row) => row.name === 'estimate');
+  expect(distance?.error).toBeUndefined();
+  expect(distance?.display?.unit).toBe('km');
+  expect(estimate?.error).toBeUndefined();
+  expect(estimate?.summary?.kind).toBe('scenario');
+  if (estimate?.summary?.kind !== 'scenario') throw new Error('expected scenario');
+  expect(estimate.summary.cells.every((cell) => cell.kind === 'dist')).toBe(true);
+  expect(estimate.display?.unit).toBe('km');
+  const estimates = estimate.display?.cells ?? [];
+  expect(Number(estimates[0]?.p50)).toBeGreaterThan(1);
+  expect(Number(estimates[0]?.p50)).toBeLessThan(3);
+  expect(Number(estimates[1]?.p50)).toBeGreaterThan(2);
+  expect(Number(estimates[1]?.p50)).toBeLessThan(6);
 });

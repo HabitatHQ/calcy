@@ -1,6 +1,8 @@
 // Pure helpers for the code editor (highlighting / autocomplete / lint). Kept
 // out of the Svelte component so they are unit-testable without a DOM.
 
+import { tokenize } from './engine/parse';
+
 // Names the user has bound in the sheet — either `name = expr` or
 // `unit name = expr`. Comments (after `#`) are ignored. Order of first
 // definition is preserved; redefinitions are deduped.
@@ -27,15 +29,29 @@ export function functionInsertion(name: string): { insert: string; cursorOffset:
   return { insert, cursorOffset: insert.length };
 }
 
-// Pin (or clear) the output unit of a single sheet line by rewriting its
-// trailing `in`/`to` conversion — the sheet text stays the source of truth.
-// A trailing comment is preserved. An empty unit removes the conversion.
+// Pin the outer result before any `where` bindings. Only a top-level `in`
+// is a display conversion; `to` builds an interval and must remain intact.
 export function setLineConversion(line: string, unit: string): string {
   const hash = line.indexOf('#');
   const code = (hash >= 0 ? line.slice(0, hash) : line).trimEnd();
   const comment = hash >= 0 ? line.slice(hash).trim() : '';
-  const core = code.replace(/\s+(?:in|to)\s+.+$/, '');
+  let depth = 0;
+  let conversion: number | undefined;
+  let where = code.length;
+  for (const token of tokenize(code)) {
+    if (token.kind === 'lparen' || token.kind === 'lbrack') depth++;
+    else if (token.kind === 'rparen' || token.kind === 'rbrack') depth--;
+    else if (depth === 0 && token.kind === 'ident') {
+      if (token.value === 'where') {
+        where = token.start;
+        break;
+      }
+      if (token.value === 'in') conversion = token.start;
+    }
+  }
+  const core = code.slice(0, conversion ?? where).trimEnd();
+  const bindings = code.slice(where);
   const u = unit.trim();
-  const rebuilt = u ? `${core} in ${u}` : core;
+  const rebuilt = `${core}${u ? ` in ${u}` : ''}${bindings ? ` ${bindings}` : ''}`;
   return comment ? `${rebuilt} ${comment}` : rebuilt;
 }

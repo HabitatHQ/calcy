@@ -32,6 +32,22 @@ export const DEFAULT_OPTIONS: EngineOptions = {
   confidence: 0.9
 };
 
+export function isValidSampleCount(count: number): boolean {
+  return count > 0 && Number.isSafeInteger(count);
+}
+
+// The confidence level maps an interval onto a normal/lognormal band, so it
+// must be a probability strictly between 0 and 1.
+export function isValidConfidence(level: number): boolean {
+  return Number.isFinite(level) && level > 0 && level < 1;
+}
+
+// Calendar conventions (days per month / per year) scale the month and year
+// units, so they must be a finite positive number of days.
+export function isValidCalendarDays(days: number): boolean {
+  return Number.isFinite(days) && days > 0;
+}
+
 export const RATE_PERIODS = ['second', 'minute', 'hour', 'day', 'week', 'month', 'year'] as const;
 export type RatePeriod = (typeof RATE_PERIODS)[number];
 
@@ -100,16 +116,25 @@ function scaleValue(v: Value, k: number, dimOut: Dimension): Value {
 export class Engine {
   opts: EngineOptions;
   units: Map<string, UnitDef>;
-  private customUnits = new Map<string, string>();
   private bridges = new Map<string, Value>();
+  private sheetUnits = new Map<string, UnitDef | undefined>();
+  private sheetBridges = new Map<string, Value | undefined>();
   private lineValues: (Value | null)[] = [];
   private lastEnv = new Map<string, Value>();
   private periodSeconds: Record<RatePeriod, number>;
 
   constructor(opts: Partial<EngineOptions> = {}, customUnits: Record<string, string> = {}) {
     this.opts = { ...DEFAULT_OPTIONS, ...opts };
+    if (!isValidSampleCount(this.opts.N))
+      throw new Error('sample count must be a positive integer');
+    if (!isValidConfidence(this.opts.confidence))
+      throw new Error('confidence level must be in (0, 1)');
+    if (!isValidCalendarDays(this.opts.monthDays))
+      throw new Error('month length must be a positive number of days');
+    if (!isValidCalendarDays(this.opts.yearDays))
+      throw new Error('year length must be a positive number of days');
     this.units = buildUnitTable({ monthDays: this.opts.monthDays, yearDays: this.opts.yearDays });
-    for (const [name, def] of Object.entries(customUnits)) this.defineUnit(name, def);
+    this.defineCustomUnits(customUnits);
     this.periodSeconds = {
       second: 1,
       minute: 60,
@@ -131,34 +156,112 @@ export class Engine {
     };
   }
 
-  // Define a custom unit from `name = definition` text, e.g. `sprint = 2 week`.
-  defineUnit(name: string, definition: string): void {
+  private restoreSheetDeclarations(): void {
+    for (const [name, previous] of this.sheetUnits) {
+      if (previous) this.units.set(name, previous);
+      else this.units.delete(name);
+    }
+    for (const [name, previous] of this.sheetBridges) {
+      if (previous) this.bridges.set(name, previous);
+      else this.bridges.delete(name);
+    }
+    this.sheetUnits.clear();
+    this.sheetBridges.clear();
+  }
+
+  private rememberSheetUnit(name: string): void {
+    if (!this.sheetUnits.has(name)) this.sheetUnits.set(name, this.units.get(name));
+  }
+
+  private rememberSheetBridge(name: string): void {
+    if (!this.sheetBridges.has(name)) this.sheetBridges.set(name, this.bridges.get(name));
+  }
+
+  private validateUnitName(name: string): void {
+    if (!/^[A-Za-z_]\w*$/.test(name)) throw new Error(`invalid unit name '${name}'`);
+    const line = parseLine(`1 ${name}`, { isUnit: () => true });
+    if (
+      line.type !== 'expr' ||
+      line.expr.type !== 'bin' ||
+      line.expr.op !== '*' ||
+      line.expr.right.type !== 'ident' ||
+      line.expr.right.name !== name
+    )
+      throw new Error(`invalid unit name '${name}'`);
+  }
+
+  private defineCustomUnits(definitions: Record<string, string>): void {
+    const pending = new Map(Object.entries(definitions));
+    while (pending.size) {
+      let progress = false;
+      let failure: unknown;
+      for (const [name, definition] of pending) {
+        try {
+          this.defineUnit(name, definition);
+          pending.delete(name);
+          progress = true;
+        } catch (error) {
+          failure = new Error(`custom unit '${name}': ${errMsg(error)}`);
+        }
+      }
+      if (!progress) throw failure;
+    }
+  }
+
+  private evaluateUnitDefinition(definition: string): UnitDef {
     const ctx = this.ctxFor(this.makeFns(1));
     const line = parseLine(definition, { isUnit: (n) => this.units.has(n) });
     if (line.type !== 'expr') throw new Error('unit definition must be an expression');
     const v = evalRoot(line.expr, ctx).value;
     if (v.scalar == null) throw new Error('unit definition must be deterministic');
-    this.units.set(name, { dim: v.dim, scale: v.scalar });
-    this.customUnits.set(name, definition);
+    if (!Number.isFinite(v.scalar) || v.scalar <= 0)
+      throw new Error('unit definition scale must be finite and positive');
+    return { dim: v.dim, scale: v.scalar };
   }
 
-  // Declare a cross-dimension equivalence, e.g. `water = 18.015 g/mol`. Used by
-  // `X in Y via name` to bridge otherwise-incompatible dimensions.
-  defineBridge(name: string, definition: string): void {
+  private evaluateBridgeDefinition(definition: string): Value {
     const ctx = this.ctxFor(this.makeFns(1));
     const line = parseLine(definition, { isUnit: (n) => this.units.has(n) });
     if (line.type !== 'expr') throw new Error('bridge definition must be an expression');
     const v = evalRoot(line.expr, ctx).value;
     if (v.scalar == null) throw new Error('bridge definition must be deterministic');
-    this.bridges.set(name, v);
+    // A bridge is a conversion factor: `X in Y via name` divides by it, so a
+    // zero or non-finite factor would produce an infinite conversion.
+    if (!Number.isFinite(v.scalar) || v.scalar <= 0)
+      throw new Error('bridge definition scale must be finite and positive');
+    return v;
   }
 
-  // Mint a new currency: each alias maps to a fresh base dimension (keyed by the
-  // first name), so it adds/subtracts only with itself and converts to other
-  // currencies through a `bridge` FX rate — never silently mixing. Unlike
-  // `unit btc = 50000 $`, which would alias dollars. Re-running with the same
-  // names just re-sets identical entries (idempotent across re-evals).
-  defineCurrency(names: string[]): void {
+  // Public declarations configure the engine until explicitly replaced. Sheet
+  // directives use the private variants below and are rolled back before the
+  // next evaluation without rebuilding the full unit catalogue.
+  defineUnit(name: string, definition: string): void {
+    this.restoreSheetDeclarations();
+    this.validateUnitName(name);
+    this.units.set(name, this.evaluateUnitDefinition(definition));
+  }
+
+  private defineSheetUnit(name: string, definition: string): void {
+    this.validateUnitName(name);
+    const unit = this.evaluateUnitDefinition(definition);
+    this.rememberSheetUnit(name);
+    this.units.set(name, unit);
+  }
+
+  // Declare a cross-dimension equivalence, e.g. `water = 18.015 g/mol`. Used by
+  // `X in Y via name` to bridge otherwise-incompatible dimensions.
+  defineBridge(name: string, definition: string): void {
+    this.restoreSheetDeclarations();
+    this.bridges.set(name, this.evaluateBridgeDefinition(definition));
+  }
+
+  private defineSheetBridge(name: string, definition: string): void {
+    const bridge = this.evaluateBridgeDefinition(definition);
+    this.rememberSheetBridge(name);
+    this.bridges.set(name, bridge);
+  }
+
+  private setCurrency(names: string[], sheetLocal: boolean): void {
     if (names.length === 0) throw new Error('currency needs a name, e.g. `currency BTC`');
     for (const n of names)
       if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(n))
@@ -166,7 +269,22 @@ export class Engine {
           `currency: '${n}' isn't a valid name — use letters/digits, e.g. \`currency BTC, bitcoin\``
         );
     const key = names[0];
-    for (const n of names) this.units.set(n, { dim: { [key]: 1 }, scale: 1 });
+    for (const n of names) {
+      if (sheetLocal) this.rememberSheetUnit(n);
+      this.units.set(n, { dim: { [key]: 1 }, scale: 1 });
+    }
+  }
+
+  // Mint a new currency: each alias maps to a fresh base dimension (keyed by the
+  // first name), so it adds/subtracts only with itself and converts to other
+  // currencies through a `bridge` FX rate — never silently mixing.
+  defineCurrency(names: string[]): void {
+    this.restoreSheetDeclarations();
+    this.setCurrency(names, false);
+  }
+
+  private defineSheetCurrency(names: string[]): void {
+    this.setCurrency(names, true);
   }
 
   private ctxFor(fns: DistFns): EvalCtx {
@@ -174,6 +292,7 @@ export class Engine {
   }
 
   evalSheet(text: string): SheetResult {
+    this.restoreSheetDeclarations();
     // Deterministic per sheet: each re-eval resets the RNG to the seed.
     const fns = this.makeFns(this.opts.seed);
     const env = new Map<string, Value>();
@@ -271,6 +390,10 @@ export class Engine {
       if (corMatch) {
         const [, a, b, rExpr] = corMatch;
         try {
+          if (
+            pairs.some((pair) => (pair.a === a && pair.b === b) || (pair.a === b && pair.b === a))
+          )
+            throw new Error(`cor: duplicate pair '${a}', '${b}'`);
           const r = this.evalCorrelation(a, b, rExpr, byName, blockCtx);
           pairs.push({ a, b, r, index: idx });
           results.set(idx, { index: idx, kind: 'unitdef', raw, name: `cor(${a}, ${b})`, comment });
@@ -298,6 +421,8 @@ export class Engine {
           throw new Error(
             `correlate: member '${line.name}' must be a distribution — it has no samples to reorder`
           );
+        if (!value.samples.every(Number.isFinite))
+          throw new Error(`correlate: member '${line.name}' contains a non-finite draw`);
         const m: Member = { name: line.name, index: idx, value, pinned, ast: line.expr, comment };
         members.push(m);
         byName.set(line.name, m);
@@ -308,7 +433,7 @@ export class Engine {
     }
 
     let headerError: string | undefined;
-    if (sound && members.length >= 2) {
+    if (sound && members.length >= 1) {
       // Assemble the target matrix (identity + each pair's r) and jointly reorder.
       const k = members.length;
       const target: number[][] = Array.from({ length: k }, (_, a) =>
@@ -415,14 +540,14 @@ export class Engine {
           throw new Error('scenario table needs a coord header row first, e.g. `# low base high`');
         const tokens = rhs
           .trim()
-          .split(/\s{2,}/)
+          .split(/(?: {2,}|\t)\s*/)
           .filter(Boolean);
         if (tokens.length !== coords.length && tokens.length !== coords.length + 1)
           throw new Error(
             `scenario row '${name}' has ${tokens.length} cell(s) but the axis has ${coords.length} coord(s)`
           );
         const unit = tokens.length > coords.length ? tokens[coords.length] : '';
-        const parts = coords.map((c, k) => `${c}: ${tokens[k]}${unit ? ` ${unit}` : ''}`);
+        const parts = coords.map((c, k) => `${c}: (${tokens[k]})${unit ? ` ${unit}` : ''}`);
         const src = `${name} = scenario[${axis}](${parts.join(', ')})`;
         const line = parseLine(src, { isUnit: (n) => this.units.has(n) });
         if (line.type !== 'assign') throw new Error('scenario row did not parse as an assignment');
@@ -461,7 +586,7 @@ export class Engine {
     if (!byName.has(a)) throw new Error(`cor: unknown member '${a}'`);
     if (!byName.has(b)) throw new Error(`cor: unknown member '${b}'`);
     const line = parseLine(rExpr, { isUnit: (n) => this.units.has(n) });
-    if (line.type !== 'expr' && line.type !== 'assign') throw new Error('cor: r must be a number');
+    if (line.type !== 'expr') throw new Error('cor: r must be a number expression');
     const v = evalRoot(line.expr, blockCtx).value;
     if (v.scalar == null) throw new Error('cor: r must be a deterministic number');
     if (Object.values(v.dim).some((e) => e)) throw new Error('cor: r must be dimensionless');
@@ -526,7 +651,7 @@ export class Engine {
         return { index, kind: 'comment', raw };
       case 'unitdef':
         try {
-          this.defineUnit(parsed.name, parsed.definition);
+          this.defineSheetUnit(parsed.name, parsed.definition);
           return { index, kind: 'unitdef', raw, name: parsed.name, comment: parsed.comment };
         } catch (e) {
           return { index, kind: 'unitdef', raw, name: parsed.name, ...toError(e) };
@@ -534,7 +659,7 @@ export class Engine {
       case 'bridgedef':
         // Rendered like a unitdef (a no-value definition directive).
         try {
-          this.defineBridge(parsed.name, parsed.definition);
+          this.defineSheetBridge(parsed.name, parsed.definition);
           return { index, kind: 'unitdef', raw, name: parsed.name, comment: parsed.comment };
         } catch (e) {
           return { index, kind: 'unitdef', raw, name: parsed.name, ...toError(e) };
@@ -542,7 +667,7 @@ export class Engine {
       case 'currencydef':
         // Rendered like a unitdef (a no-value definition directive).
         try {
-          this.defineCurrency(parsed.names);
+          this.defineSheetCurrency(parsed.names);
           return { index, kind: 'unitdef', raw, name: parsed.names[0], comment: parsed.comment };
         } catch (e) {
           return { index, kind: 'unitdef', raw, name: parsed.names[0], ...toError(e) };
@@ -622,7 +747,7 @@ export class Engine {
   // geometric series instead of a flat product.
   accumulate(index: number, period: RatePeriod, count: number, growth = 0): DisplayValue | null {
     const v = this.lineValues[index];
-    if (!v || (v.dim.time ?? 0) !== -1) return null;
+    if (!v || v.axes || v.list || (v.dim.time ?? 0) !== -1) return null;
     const seconds = this.periodSeconds[period] * geometricSum(count, growth);
     const totalDim = dimMul(v.dim, { time: 1 });
     const total = scaleValue(v, seconds, totalDim);
@@ -673,11 +798,15 @@ export class Engine {
   }
 }
 
-// Number of leading spaces/tabs — the block indentation depth. Only ever
-// compared for strict-greater, so no fixed step is imposed.
+// Tabs advance to the next eight-column stop, matching ordinary text editors.
 function indentOf(raw: string): number {
-  const m = /^[ \t]*/.exec(raw);
-  return m ? m[0].length : 0;
+  let column = 0;
+  for (const character of raw) {
+    if (character === ' ') column++;
+    else if (character === '\t') column += 8 - (column % 8);
+    else break;
+  }
+  return column;
 }
 
 type BlockHeader = { kind: 'correlate' } | { kind: 'scenario'; axis: string };

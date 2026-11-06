@@ -73,3 +73,26 @@ describe('plain kelvin arithmetic is unchanged (no regression)', () => {
     expect(num('300 K + 280 K in K')).toBeCloseTo(580, 6); // not an error
   });
 });
+
+describe('temperature differences survive wrappers and reducers', () => {
+  it('keeps the shared difference tag on a scenario grid during conversion', () => {
+    const result = values('t = scenario(cold: 0 °C, hot: 100 °C)\n(t - 0 °C) in °F')[1];
+    expect(result.error).toBeUndefined();
+    expect(result.display?.cells?.map((cell) => Number(cell.value))).toEqual([0, 180]);
+  });
+
+  it('keeps the absolute offset for a scenario of absolute temperatures', () => {
+    const result = one('scenario(cold: 0 °C, hot: 100 °C) in °F');
+    expect(result.error).toBeUndefined();
+    const cells = result.display?.cells ?? [];
+    expect(Number(cells[0]?.value)).toBeCloseTo(32, 8);
+    expect(Number(cells[1]?.value)).toBeCloseTo(212, 8);
+  });
+
+  it('preserves difference semantics through unary operations and sums', () => {
+    expect(num('-(20 °C - 10 °C) in °F')).toBeCloseTo(-18, 8);
+    expect(num('abs(-10 Cdeg) in °F')).toBeCloseTo(18, 8);
+    expect(num('sum(5 Cdeg, 3 Cdeg) in °F')).toBeCloseTo(14.4, 8);
+    expect(num('mean(scenario(low: 5 Cdeg, high: 15 Cdeg) over case) in °F')).toBeCloseTo(18, 8);
+  });
+});

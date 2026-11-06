@@ -121,31 +121,81 @@ export interface PinnedUnit {
   log?: { ref: number; factor: number }; // log units: displayed = factor · log10(base / ref)
 }
 
-const samplesOf = (v: Value, n: number): Float64Array =>
-  v.samples ?? Float64Array.from({ length: n }, () => v.scalar as number);
+// A list literal or a scenario grid is a collection of values, not a single
+// magnitude. Operations that need one number (or one distribution) say so
+// explicitly: broadcasting `undefined` would silently poison the result with
+// NaN, and indexing `undefined` would throw a raw TypeError.
+function requireMagnitude(v: Value, what: string): void {
+  if (v.list)
+    throw new Error(`${what} does not accept a list value — reduce it first (e.g. sum([…]))`);
+  if (v.axes)
+    throw new Error(
+      `${what} does not accept a scenario value — pick a coord or reduce it over an axis first`
+    );
+}
 
-// Elementwise binary op with scalar fast path and dim check.
+// The magnitude of a value as a sample array: a distribution's own draws, or a
+// scalar broadcast across n draws. Lists and scenario grids are rejected —
+// callers that can handle them map over the cells first.
+const samplesOf = (v: Value, n: number): Float64Array => {
+  if (v.samples) return v.samples;
+  if (v.scalar != null) return Float64Array.from({ length: n }, () => v.scalar as number);
+  throw new Error('expected a number or a distribution');
+};
+
+// Elementwise binary op with scalar fast path and dim check. `what` names the
+// operation in errors: a non-finite draw (÷ by zero, √ of a negative) is
+// reported here instead of poisoning every downstream statistic.
 function binop(
   a: Value,
   b: Value,
   fn: (x: number, y: number) => number,
   dimOut: Dimension,
-  n: number
+  n: number,
+  what = 'arithmetic'
 ): Value {
+  requireMagnitude(a, what);
+  requireMagnitude(b, what);
   if (a.scalar != null && b.scalar != null) return { dim: dimOut, scalar: fn(a.scalar, b.scalar) };
   const xa = samplesOf(a, n);
   const xb = samplesOf(b, n);
   const out = new Float64Array(n);
-  for (let i = 0; i < n; i++) out[i] = fn(xa[i], xb[i]);
+  for (let i = 0; i < n; i++) {
+    const y = fn(xa[i], xb[i]);
+    if (!Number.isFinite(y))
+      throw new Error(
+        `${what} produced a non-finite value (${Number.isNaN(y) ? 'NaN' : '∞'}) for some draws`
+      );
+    out[i] = y;
+  }
   return { dim: dimOut, samples: out };
 }
 
-function unaryMap(a: Value, fn: (x: number) => number, dimOut: Dimension): Value {
-  if (a.scalar != null) return { dim: dimOut, scalar: fn(a.scalar) };
-  const out = new Float64Array((a.samples as Float64Array).length);
+function unaryMap(
+  a: Value,
+  fn: (x: number) => number,
+  dimOut: Dimension,
+  what = 'this operation'
+): Value {
+  requireMagnitude(a, what);
+  // A temperature point/difference keeps its tag while the operation leaves the
+  // dimension alone (negation, abs, rounding): a difference stays a difference.
+  const temp = dimEq(dimOut, a.dim) ? a.temp : undefined;
+  if (a.scalar != null)
+    return temp
+      ? { dim: dimOut, scalar: fn(a.scalar), temp }
+      : { dim: dimOut, scalar: fn(a.scalar) };
   const xs = a.samples as Float64Array;
-  for (let i = 0; i < xs.length; i++) out[i] = fn(xs[i]);
-  return { dim: dimOut, samples: out };
+  const out = new Float64Array(xs.length);
+  for (let i = 0; i < xs.length; i++) {
+    const y = fn(xs[i]);
+    if (!Number.isFinite(y))
+      throw new Error(
+        `${what} produced a non-finite value (${Number.isNaN(y) ? 'NaN' : '∞'}) for some draws`
+      );
+    out[i] = y;
+  }
+  return temp ? { dim: dimOut, samples: out, temp } : { dim: dimOut, samples: out };
 }
 
 const scalarParam = (v: Value, what: string): number => {
@@ -168,12 +218,21 @@ const cellsOf = (v: Value): Value[] => (v.axes ? (v.cells ?? []) : [v]);
 // display hint when every cell agrees on one (so the grid renders in the unit
 // the cells carry).
 function makeGrid(axes: Axis[], cells: Value[]): Value {
+  for (const cell of cells) {
+    if (
+      (cell.scalar != null && !Number.isFinite(cell.scalar)) ||
+      cell.list?.some((value) => !Number.isFinite(value))
+    )
+      throw new Error('scenario cell produced a non-finite value; check the expression domain');
+  }
   const grid: Value = { dim: cells[0].dim, axes, cells };
   const h0 = cells[0].unitHint;
   const shared =
     h0 && cells.every((c) => c.unitHint?.label === h0.label && c.unitHint?.factor === h0.factor)
       ? h0
       : undefined;
+  const temp = cells[0].temp;
+  if (temp && cells.every((cell) => cell.temp === temp)) grid.temp = temp;
   return shared ? withHint(grid, shared) : grid;
 }
 
@@ -224,6 +283,8 @@ function scaleVal(v: Value, k: number, dim: Dimension): Value {
 // Cross a dimension gap through a declared bridge: multiply or divide the value
 // by the (deterministic) bridge factor, whichever lands on the target dim.
 function applyBridge(value: Value, name: string, ctx: EvalCtx, targetDim: Dimension): Value {
+  if (value.axes) return mapCells(value, (cell) => applyBridge(cell, name, ctx, targetDim));
+  requireMagnitude(value, 'bridge conversion');
   const bridge = ctx.bridges.get(name);
   if (!bridge) throw new Error(`unknown bridge '${name}' — declare it with 'bridge ${name} = …'`);
   const k = scalarParam(bridge, `bridge '${name}'`);
@@ -450,7 +511,8 @@ export const FUNCTIONS: FnDoc[] = [
     name: 'binomial',
     category: 'Distributions',
     sig: 'binomial(trials, p)',
-    summary: 'Whole count of successes in n independent trials (bounded by n).'
+    summary:
+      'Whole count of successes in n independent trials (bounded by n); when p = 1, the value and mode are exactly n.'
   },
   {
     name: 'discrete',
@@ -681,6 +743,7 @@ function weightedMixture(callArgs: CallArg[], ctx: EvalCtx, label: string): Valu
     if (wv < 0) throw new Error(`${label}: weights must be non-negative`);
     weights.push(wv);
     comps.push(evalNode(a.value, ctx));
+    requireMagnitude(comps[comps.length - 1], `${label}()`);
   }
   const dim = comps[0].dim;
   for (const c of comps)
@@ -734,7 +797,6 @@ function evalPick(callArgs: CallArg[], ctx: EvalCtx): Value {
 // element-wise across the axis's cells (per-draw for distributions), so they
 // have a natural definition; other reducers (median, sd, p, …) do not.
 const OVER_REDUCERS = new Set(['min', 'max', 'mean', 'sum']);
-
 // Fold a scenario axis's cells with the named reducer. Cells share one dim/hint
 // (they are coords of one value), so we reduce pairwise via binop; distributions
 // fold per-draw, preserving correlation-by-reuse.
@@ -742,11 +804,16 @@ function foldOver(name: string, members: Value[], ctx: EvalCtx): Value {
   const n = ctx.fns.N;
   const dim = members[0].dim;
   const hint = members[0].unitHint;
-  const fold = (fn: (x: number, y: number) => number) =>
-    withHint(
-      members.reduce((acc, m) => binop(acc, m, fn, dim, n)),
+  const temp = members[0].temp;
+  const sharedTemp = temp && members.every((member) => member.temp === temp) ? temp : undefined;
+  const fold = (fn: (x: number, y: number) => number) => {
+    const result = withHint(
+      members.reduce((acc, m) => binop(acc, m, fn, dim, n, `${name}()`)),
       hint
     );
+    if (sharedTemp) result.temp = sharedTemp;
+    return result;
+  };
   switch (name) {
     case 'min':
       return fold((x, y) => Math.min(x, y));
@@ -811,6 +878,7 @@ function evalBracket(callArgs: CallArg[], ctx: EvalCtx): Value {
   if (pairArgs.length < 2)
     throw new Error('bracket: needs at least one tier — bracket(x, upper: rate)');
   const x = evalNode(pairArgs[0].value as Node, ctx);
+  if (x.list) throw new Error('bracket() does not accept a list value — reduce it first');
   for (let i = 1; i < pairArgs.length; i++) {
     if (pairArgs[i].weight === undefined)
       throw new Error(`bracket: tier ${i} is missing its 'upper:' weight`);
@@ -840,51 +908,111 @@ function evalBracket(callArgs: CallArg[], ctx: EvalCtx): Value {
     ratesScalar.push(scalarParam(r, 'rate'));
   }
   const rd = rateDim ?? {};
-  if (x.scalar != null) {
-    const xi = x.scalar;
-    if (!total) {
-      let k = 0;
-      while (k < boundsScalar.length && xi >= boundsScalar[k]) k++;
-      if (k === boundsScalar.length) k = boundsScalar.length - 1;
-      return { dim: rd, scalar: ratesScalar[k] };
+  const apply = (x: Value): Value => {
+    if (x.scalar != null) {
+      const xi = x.scalar;
+      if (!total) {
+        let k = 0;
+        while (k < boundsScalar.length && xi >= boundsScalar[k]) k++;
+        if (k === boundsScalar.length) k = boundsScalar.length - 1;
+        return { dim: rd, scalar: ratesScalar[k] };
+      }
+      let acc = 0;
+      let prevU = 0;
+      for (let k = 0; k < boundsScalar.length; k++) {
+        const width = Math.min(xi, boundsScalar[k]) - prevU;
+        if (width > 0) acc += ratesScalar[k] * width;
+        prevU = boundsScalar[k];
+      }
+      return { dim: dimMul(x.dim, rd), scalar: acc };
     }
-    let acc = 0;
+    const xs = x.samples as Float64Array;
+    const out = new Float64Array(xs.length);
+    if (!total) {
+      // Marginal: index of the first tier whose upper exceeds x.
+      for (let i = 0; i < xs.length; i++) {
+        const xi = xs[i];
+        let k = 0;
+        while (k < boundsScalar.length && xi >= boundsScalar[k]) k++;
+        if (k === boundsScalar.length) k = boundsScalar.length - 1;
+        out[i] = ratesScalar[k];
+      }
+      return { dim: rd, samples: out };
+    }
+    // Cumulative: Σ (min(bᵢ, x) − bᵢ₋₁) · rᵢ over all i.
     let prevU = 0;
     for (let k = 0; k < boundsScalar.length; k++) {
-      const width = Math.min(xi, boundsScalar[k]) - prevU;
-      if (width > 0) acc += ratesScalar[k] * width;
-      prevU = boundsScalar[k];
+      const u = boundsScalar[k];
+      const r = ratesScalar[k];
+      for (let i = 0; i < xs.length; i++) {
+        const width = Math.min(xs[i], u) - prevU;
+        if (width > 0) out[i] += r * width;
+      }
+      prevU = u;
     }
-    return { dim: dimMul(x.dim, rd), scalar: acc };
-  }
-  const xs = x.samples as Float64Array;
-  const out = new Float64Array(xs.length);
-  if (!total) {
-    // Marginal: index of the first tier whose upper exceeds x.
-    for (let i = 0; i < xs.length; i++) {
-      const xi = xs[i];
-      let k = 0;
-      while (k < boundsScalar.length && xi >= boundsScalar[k]) k++;
-      if (k === boundsScalar.length) k = boundsScalar.length - 1;
-      out[i] = ratesScalar[k];
-    }
-    return { dim: rd, samples: out };
-  }
-  // Cumulative: Σ (min(bᵢ, x) − bᵢ₋₁) · rᵢ over all i.
-  let prevU = 0;
-  for (let k = 0; k < boundsScalar.length; k++) {
-    const u = boundsScalar[k];
-    const r = ratesScalar[k];
-    for (let i = 0; i < xs.length; i++) {
-      const width = Math.min(xs[i], u) - prevU;
-      if (width > 0) out[i] += r * width;
-    }
-    prevU = u;
-  }
-  return { dim: dimMul(x.dim, rd), samples: out };
+    return { dim: dimMul(x.dim, rd), samples: out };
+  };
+  return x.axes ? mapCells(x, apply) : apply(x);
 }
 
-function evalCall(node: { name: string; args: CallArg[] }, ctx: EvalCtx): Value {
+// Ordinary functions preserve scenario axes; their reducers consume samples
+// within each cell. Axis reducers and selector syntax are handled separately.
+const UNARY_CALLS: Record<string, true> = {
+  chance: true,
+  mean: true,
+  median: true,
+  mode: true,
+  skew: true,
+  sd: true,
+  stdev: true,
+  min: true,
+  max: true,
+  sqrt: true,
+  abs: true,
+  sin: true,
+  cos: true,
+  tan: true,
+  asin: true,
+  acos: true,
+  atan: true,
+  ceil: true,
+  floor: true,
+  exp: true,
+  ln: true,
+  log: true,
+  log10: true
+};
+const CELL_CALLS: Record<string, true> = {
+  ...UNARY_CALLS,
+  p: true,
+  percentile: true,
+  interval: true,
+  round: true,
+  clamp: true,
+  cagr: true
+};
+
+function mapCall(values: Value[], apply: (cells: Value[]) => Value): Value {
+  let axes: Axis[] = [];
+  let rows: Value[][] = [[]];
+  for (const value of values) {
+    const resolved = resolveAxes(axes, value.axes ?? []);
+    if (resolved.leftIndex.length > MAX_CELLS)
+      throw new Error(
+        `scenario grid too large: ${resolved.leftIndex.length} cells (cap ${MAX_CELLS})`
+      );
+    const cells = cellsOf(value);
+    rows = resolved.leftIndex.map((i, k) => [...rows[i], cells[resolved.rightIndex[k]]]);
+    axes = resolved.axes;
+  }
+  return makeGrid(axes, rows.map(apply));
+}
+
+function evalCall(
+  node: { name: string; args: CallArg[] },
+  ctx: EvalCtx,
+  evaluated?: Value[]
+): Value {
   const name = node.name;
   const callArgs = node.args;
   const hasNamed = callArgs.some((a) => a.name != null);
@@ -905,13 +1033,22 @@ function evalCall(node: { name: string; args: CallArg[] }, ctx: EvalCtx): Value 
   const overArg = callArgs.find((a) => a.name === 'over');
   if (overArg) return evalReduceOver(name, callArgs, overArg, ctx);
   const args: Node[] = hasNamed ? bindNamed(name, callArgs) : callArgs.map((a) => a.value as Node);
+  if (Object.hasOwn(UNARY_CALLS, name) && args.length !== 1)
+    throw new Error(`${name}() takes exactly one argument`);
+  // Validate arity before evaluating operands: malformed extra args must not
+  // trigger unrelated parse/evaluation failures first.
+  const values =
+    !evaluated && Object.hasOwn(CELL_CALLS, name) ? args.map((arg) => evalNode(arg, ctx)) : null;
+  if (values?.some((value) => value.axes))
+    return mapCall(values, (cells) => evalCall(node, ctx, cells));
+  if (values) evaluated = values;
   const ev = (i: number) => {
     // Guard the unary/reducer cases that read ev(0) without an explicit arity
     // check (mean, min, sqrt, sin, …). Without this, a no-arg call like `mean()`
     // dereferences `undefined.type` deep in evalNode and leaks an internal
     // "Cannot read properties of undefined" error instead of a usable message.
     if (args[i] === undefined) throw new Error(`${name}() needs an argument`);
-    return evalNode(args[i], ctx);
+    return evaluated ? evaluated[i] : evalNode(args[i], ctx);
   };
   switch (name) {
     case 'normal': {
@@ -991,6 +1128,7 @@ function evalCall(node: { name: string; args: CallArg[] }, ctx: EvalCtx): Value 
       }
       if (args.length < 2) throw new Error('mixture(d1, d2, …)');
       const comps = args.map((_, i) => ev(i));
+      for (const component of comps) requireMagnitude(component, 'mixture()');
       const dim = comps[0].dim;
       for (const c of comps)
         if (!dimEq(c.dim, dim)) throw new Error('mixture: components must share units');
@@ -1163,6 +1301,7 @@ function evalCall(node: { name: string; args: CallArg[] }, ctx: EvalCtx): Value 
         weights.push(wv);
         vals.push(evalNode(args[i + 1], ctx));
       }
+      for (const value of vals) requireMagnitude(value, 'discrete()');
       const dim = vals[0].dim;
       for (const v of vals)
         if (!dimEq(v.dim, dim)) throw new Error('discrete: values must share units');
@@ -1212,14 +1351,23 @@ function evalCall(node: { name: string; args: CallArg[] }, ctx: EvalCtx): Value 
         );
       }
       if (vals.length === 0) return { dim: {}, scalar: 0 };
+      if (vals.some((value) => value.list))
+        throw new Error('sum() cannot add a list alongside other values — reduce the list first');
       const dim = vals[0].dim;
       for (const v of vals)
         if (!dimEq(v.dim, dim))
           throw new Error(
             `sum: incompatible dimensions (${dimToString(dim) || 'number'} vs ${dimToString(v.dim) || 'number'})`
           );
+      if (vals.some((value) => value.axes)) {
+        return vals.reduce((acc, value) =>
+          acc.axes || value.axes
+            ? resolveAxisBinop(acc, value, (a, b) => binScalar('+', a, b, ctx))
+            : binScalar('+', acc, value, ctx)
+        );
+      }
       return withHint(
-        vals.reduce((acc, v) => binop(acc, v, (x, y) => x + y, dim, ctx.fns.N)),
+        vals.reduce((acc, value) => binScalar('+', acc, value, ctx)),
         sharedHint(vals)
       );
     }
@@ -1229,6 +1377,7 @@ function evalCall(node: { name: string; args: CallArg[] }, ctx: EvalCtx): Value 
     case 'chance': {
       if (args.length !== 1) throw new Error('chance(predicate) — e.g. chance(total < 30 day)');
       const d = ev(0);
+      requireMagnitude(d, 'chance()');
       requireDimless(d, 'chance predicate');
       return { dim: {}, scalar: d.scalar ?? reduceMean(d.samples as Float64Array) };
     }
@@ -1354,7 +1503,7 @@ function evalCall(node: { name: string; args: CallArg[] }, ctx: EvalCtx): Value 
     // elementwise math
     case 'sqrt': {
       const x = ev(0);
-      return unaryMap(x, Math.sqrt, dimPow(x.dim, 0.5));
+      return unaryMap(x, Math.sqrt, dimPow(x.dim, 0.5), 'sqrt()');
     }
     case 'abs': {
       const x = ev(0);
@@ -1534,12 +1683,12 @@ export function evalNode(node: Node, ctx: EvalCtx): Value {
         );
       }
       const ciHint = lo.unitHint ?? hi.unitHint;
-      const loV = scalarParam(lo, 'lo');
-      const hiV = scalarParam(hi, 'hi');
-      // A reversed explicit interval (`5 km to mi` → 5000 m vs 1609 m) is
-      // almost always a `to`-as-conversion mistake — `to` builds a confidence
-      // interval, not a conversion. Point at `in`. Percentile specs sort their
-      // own bounds, so they're exempt.
+      let loV = scalarParam(lo, 'lo');
+      let hiV = scalarParam(hi, 'hi');
+      // Symmetric sugar (`about -5`, `-5 ± 1`) can derive its endpoints in
+      // either orientation; explicit bounds and percentile values stay ordered.
+      if (!node.checkOrder && node.loP == null && loV > hiV) [loV, hiV] = [hiV, loV];
+      // Reversed explicit bounds often mean `to` was mistaken for conversion.
       if (node.checkOrder && node.loP == null && loV > hiV)
         throw new Error(
           "interval lower bound is above the upper bound — to convert units use 'in' (e.g. '5 km in mi'), since 'to' makes a confidence interval"
@@ -1549,6 +1698,10 @@ export function evalNode(node: Node, ctx: EvalCtx): Value {
       // default symmetric path below stays byte-identical, so existing
       // results don't shift.)
       if (node.loP != null && node.hiP != null) {
+        if (loV > hiV)
+          throw new Error(
+            'percentile bounds must be ordered: the value at the lower percentile must not exceed the value at the higher percentile'
+          );
         const zLo = normalInverseCdf(node.loP);
         const zHi = normalInverseCdf(node.hiP);
         const out = new Float64Array(ctx.fns.N);
@@ -1640,16 +1793,22 @@ export function evalNode(node: Node, ctx: EvalCtx): Value {
         throw new Error('range bounds and step must be dimensionless');
       if (loVal.samples || hiVal.samples || stepVal?.samples)
         throw new Error('range bounds and step must be deterministic');
-      const lo = loVal.scalar as number;
-      const hi = hiVal.scalar as number;
-      const step = stepVal ? (stepVal.scalar as number) : 1;
+      const lo = scalarParam(loVal, 'range lower bound');
+      const hi = scalarParam(hiVal, 'range upper bound');
+      const step = stepVal ? scalarParam(stepVal, 'range step') : 1;
+      if (![lo, hi, step].every(Number.isFinite))
+        throw new Error('range bounds and step must be finite');
       if (step <= 0) throw new Error('range step must be positive');
       if (hi < lo) throw new Error(`range upper (${hi}) is below lower (${lo})`);
+      const count = Math.floor((hi - lo) / step + 1e-9) + 1;
+      if (!Number.isSafeInteger(count) || count > 1_000_000)
+        throw new Error('range cardinality must be finite and at most 1000000 values');
       const out: number[] = [];
-      // inclusive of both ends; with floating-point step the last sample
-      // may overshoot hi by less than step — guard with a small epsilon.
-      for (let v = lo; v <= hi + step * 1e-9; v += step) {
-        out.push(Number(v.toFixed(10)));
+      for (let i = 0; i < count; i++) {
+        const value = lo + i * step;
+        if (!Number.isFinite(value) || (i > 0 && value <= lo + (i - 1) * step))
+          throw new Error('range step cannot make forward progress at these bounds');
+        out.push(Number(value.toFixed(10)));
       }
       return { dim: {}, list: out };
     }
@@ -1668,6 +1827,8 @@ export function evalNode(node: Node, ctx: EvalCtx): Value {
       // replacement) back up to N so the result is a full distribution.
       const body = evalNode(node.body, ctx);
       const pred = evalNode(node.pred, ctx);
+      requireMagnitude(body, 'given()');
+      requireMagnitude(pred, 'given()');
       requireDimless(pred, 'given condition');
       const n = ctx.fns.N;
       const xs = samplesOf(body, n);
@@ -1733,6 +1894,8 @@ function binScalar(
   ctx: EvalCtx
 ): Value {
   const n = ctx.fns.N;
+  requireMagnitude(a, `operator ${op}`);
+  requireMagnitude(b, `operator ${op}`);
   // Display-unit hint for ordinary arithmetic: +/- keep a shared unit
   // (left wins on a tie, e.g. `5 km + 3 mi` → km); */÷ compose the typed
   // units unless a dimension cancels. Comparisons and the affine/log/temp
@@ -1807,7 +1970,7 @@ function binScalar(
       );
     case '/':
       return withHint(
-        binop(a, b, (x, y) => x / y, dimDiv(a.dim, b.dim), n),
+        binop(a, b, (x, y) => x / y, dimDiv(a.dim, b.dim), n, 'division'),
         arithHint
       );
     default: {
@@ -1849,7 +2012,7 @@ export function evalRoot(node: Node, ctx: EvalCtx): { value: Value; pinned?: Pin
     // Log target (dB/dBm/dBW): display undoes the log instead of a linear scale.
     return { value, pinned: { label: node.unitText, factor, offset, log: unit.log } };
   }
-  // No explicit `in/to`: fall back to the unit the user typed, carried as a hint
+  // No explicit `in`: fall back to the unit the user typed, carried as a hint
   // through the expression. Absent a hint (e.g. `sum` over mixed units), the
   // formatter shows the canonical base unit, exactly as before.
   const value = evalNode(node, ctx);

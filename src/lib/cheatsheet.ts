@@ -21,7 +21,7 @@ export const CHEAT_SHEET: CheatGroup[] = [
     items: [
       { code: '5 km + 3 mi', note: 'unit-aware arithmetic' },
       { code: '60 km / 1 h', note: 'compose dimensions → speed' },
-      { code: '5 km in mi', note: 'convert with in / to' },
+      { code: '5 km in mi', note: 'convert with in (to builds a range)' },
       { code: '1.2 GB in MB', note: 'data units' },
       { code: '9.8 m/s²', note: 'superscripts are exponents' }
     ]

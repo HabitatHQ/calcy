@@ -22,6 +22,24 @@ describe('math constants', () => {
     expect(num('e')).toBeCloseTo(Math.E, 10);
   });
 
+  it('does not consume Euler constants as incomplete exponents', () => {
+    expect(num('2e')).toBeCloseTo(2 * Math.E, 10);
+    expect(num('2e+x where x = 3')).toBeCloseTo(2 * Math.E + 3, 10);
+    expect(num('2e-x where x = 3')).toBeCloseTo(2 * Math.E - 3, 10);
+    expect(num('2e3')).toBe(2000);
+  });
+
+  it.each([
+    ['-2^2', -4],
+    ['(-2)^2', 4],
+    ['-4^0.5', -2],
+    ['2^-2', 0.25],
+    ['2^3^2', 512],
+    ['-3²', -9]
+  ] as const)('respects sign and exponent precedence in %s', (source, expected) => {
+    expect(num(source)).toBeCloseTo(expected, 10);
+  });
+
   it('a real resonance formula now parses', () => {
     // f = 1 / (2π√(LC)); 100 µH, 100 nF → ~50.3 kHz
     expect(num('1 / (2 * pi * sqrt(100 uH * 100 nF)) in kHz')).toBeCloseTo(50.329, 2);

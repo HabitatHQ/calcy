@@ -2,9 +2,10 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { run } from '@stricli/core';
+import { compile } from 'mdsvex';
 import { afterAll, describe, expect, it } from 'vitest';
 import { app } from '../src/cli/command';
-import { OUTPUT_FORMATS, render } from '../src/cli/render';
+import { render } from '../src/cli/render';
 import type { LineResult } from '../src/lib/engine';
 import { RESULT_HEADER, toCsv } from '../src/lib/sheet/export';
 import { lines, makeEngine } from './helpers';
@@ -66,14 +67,17 @@ describe('toCsv quoting', () => {
 describe('render dispatch', () => {
   const result = makeEngine().evalSheet('x = 2 km\ny = x * 3');
 
-  it('csv format matches toCsv(result.lines)', () => {
-    expect(render(result, 'csv')).toBe(toCsv(result.lines));
-  });
-
-  it('md format is a GFM table', () => {
-    const md = render(result, 'md');
-    expect(md.startsWith('| line |')).toBe(true);
-    expect(md).toMatch(/\|\s*---/);
+  it.each([
+    'left | right',
+    String.raw`left \| right`,
+    String.raw`left \\| right`
+  ])('preserves Markdown table columns and literal comment text: %s', async (note) => {
+    const expression = `x = 1 # ${note}`;
+    const rendered = await compile(render(makeEngine().evalSheet(expression), 'md'));
+    const cells = [...(rendered?.code ?? '').matchAll(/<td>(.*?)<\/td>/gs)].map(
+      (match) => match[1]
+    );
+    expect(cells).toEqual(['1', 'x', expression, '1', 'point', note]);
   });
 
   it('table format uses box-drawing chars with no trailing newline', () => {
@@ -82,18 +86,22 @@ describe('render dispatch', () => {
     expect(t.endsWith('\n')).toBe(false);
   });
 
-  it('json format round-trips with a lines array matching the source line count', () => {
-    const json = render(result, 'json');
-    const parsed = JSON.parse(json);
-    expect(Array.isArray(parsed.lines)).toBe(true);
-    expect(parsed.lines).toHaveLength(result.lines.length);
-  });
-
-  it('exposes the supported formats in order', () => {
-    expect(OUTPUT_FORMATS).toEqual(['table', 'md', 'csv', 'json']);
+  it('JSON export preserves evaluated values and expressions', () => {
+    const parsed = JSON.parse(render(result, 'json'));
+    expect(parsed.lines).toMatchObject([
+      { raw: 'x = 2 km', name: 'x', display: { value: '2', unit: 'km' } },
+      { raw: 'y = x * 3', name: 'y', display: { value: '6', unit: 'km' } }
+    ]);
   });
 });
 
+it('escapes literal Markdown table cell syntax', async () => {
+  const note = '`C:\\temp` | **literal**';
+  const source = `x = 1 # ${note}`;
+  const compiled = await compile(render(makeEngine().evalSheet(source), 'md'));
+  const cells = [...(compiled?.code ?? '').matchAll(/<td>(.*?)<\/td>/gs)].map((match) => match[1]);
+  expect(cells).toEqual(['1', 'x', source, '1', 'point', note]);
+});
 describe('CLI integration (stricli run)', () => {
   const dir = mkdtempSync(join(tmpdir(), 'calcy-cli-render-'));
   const file = join(dir, 'workbook.calcy');
@@ -136,6 +144,37 @@ describe('CLI integration (stricli run)', () => {
     expect(proc.out).toContain('| line |');
     expect(proc.out).toContain('| x');
     expect(proc.out).toContain('2 km');
+  });
+
+  it.each([
+    '0',
+    '-1',
+    '0.5',
+    '10000.9',
+    'NaN',
+    'Infinity'
+  ])('rejects invalid sample counts before producing results: %s', async (samples) => {
+    const proc = fakeProcess();
+    await run(app, [file, '--samples', samples], { process: proc as never });
+    expect(proc.exitCode).toEqual(expect.any(Number));
+    expect(proc.exitCode).not.toBe(0);
+    expect(proc.err).toMatch(/positive integer|convert .* to a number/i);
+    expect(proc.out).not.toContain('| line |');
+  });
+
+  it.each([
+    '0',
+    '1',
+    '-1',
+    '1.5',
+    'Infinity',
+    'NaN'
+  ])('rejects invalid confidence before evaluating: %s', async (confidence) => {
+    const proc = fakeProcess();
+    await run(app, [file, '--confidence', confidence], { process: proc as never });
+    expect(proc.exitCode).not.toBe(0);
+    expect(proc.err).toMatch(/confidence|convert .* to a number/i);
+    expect(proc.out).toBe('');
   });
 
   it('reports an error for a missing file', async () => {

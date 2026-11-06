@@ -1,6 +1,86 @@
 import fc from 'fast-check';
 import { describe, expect, it } from 'vitest';
+import { Engine, isValidSampleCount } from '../src/lib/engine';
 import { makeEngine, num, values } from './helpers';
+
+describe('engine configuration and sheet declarations', () => {
+  it('restores removed and reordered unit directives between evaluations', () => {
+    const engine = makeEngine();
+    expect(engine.evalSheet('unit stride = 2 m\n1 stride in m').lines[1].display?.value).toBe('2');
+    expect(engine.evalSheet('1 stride in m').lines[0].error).toMatch(/unknown|unit/i);
+
+    engine.evalSheet('unit stride = 2 m\nunit pace = 3 stride\n1 pace in m');
+    const reordered = engine.evalSheet('unit pace = 3 stride\nunit stride = 4 m\n1 pace in m');
+    expect(reordered.lines[0].error).toBeDefined();
+    expect(reordered.lines[2].error).toBeDefined();
+    expect(
+      engine.evalSheet('unit stride = 4 m\nunit pace = 3 stride\n1 pace in m').lines[2].display
+        ?.value
+    ).toBe('12');
+  });
+
+  it('restores overwritten built-ins and sheet-local bridge and currency directives', () => {
+    const engine = makeEngine();
+    engine.evalSheet('unit m = 2 s\n1 m in s');
+    const restored = engine.evalSheet('1 m in s\n1 m in cm');
+    expect(restored.lines[0].error).toBeDefined();
+    expect(restored.lines[1].display?.value).toBe('100');
+
+    engine.evalSheet('bridge water = 18.015 g/mol\n100 g in mol via water');
+    expect(engine.evalSheet('100 g in mol via water').lines[0].error).toMatch(/bridge|water/i);
+
+    engine.evalSheet('currency BTC, bitcoin\n1 BTC in bitcoin');
+    expect(engine.evalSheet('1 BTC').lines[0].error).toMatch(/unknown|unit/i);
+  });
+
+  it('applies reordered bridge and currency directives only within the current sheet', () => {
+    const engine = makeEngine();
+    engine.evalSheet('bridge water = 18.015 g/mol\nbridge salt = 58.44 g/mol');
+    const bridges = engine.evalSheet(
+      'bridge salt = 58.44 g/mol\nbridge water = 18.015 g/mol\n100 g in mol via water'
+    );
+    expect(Number(bridges.lines[2].display?.value)).toBeCloseTo(100 / 18.015, 6);
+    expect(engine.evalSheet('100 g in mol via water').lines[0].error).toMatch(/bridge|water/i);
+
+    engine.evalSheet('currency BTC, bitcoin');
+    const currency = engine.evalSheet('currency bitcoin, BTC\n1 BTC in bitcoin');
+    expect(currency.lines[1].display?.value).toBe('1');
+    expect(engine.evalSheet('1 BTC').lines[0].error).toMatch(/unknown|unit/i);
+  });
+
+  it('retains constructor and public declaration configuration across sheets', () => {
+    const engine = new Engine({ N: 1 }, { stride: '2 m' });
+    engine.evalSheet('unit stride = 4 m');
+    expect(engine.evalSheet('1 stride in m').lines[0].display?.value).toBe('2');
+
+    engine.defineUnit('pace', '3 m');
+    engine.defineBridge('water', '18.015 g/mol');
+    engine.defineCurrency(['COIN', 'coin']);
+    const configured = engine.evalSheet('1 pace in m\n100 g in mol via water\n1 COIN in coin');
+    expect(configured.lines.every((line) => line.error === undefined)).toBe(true);
+    expect(Number(configured.lines[0].display?.value)).toBeCloseTo(3, 2);
+    expect(Number(configured.lines[1].display?.value)).toBeCloseTo(5.55, 2);
+    expect(configured.lines[2].display).toMatchObject({ value: '1', unit: 'coin' });
+  });
+});
+
+describe('sample count validation', () => {
+  it('accepts only positive safe integers', () => {
+    expect([1, Number.MAX_SAFE_INTEGER].map(isValidSampleCount)).toEqual([true, true]);
+    expect(
+      [0, -1, 1.5, NaN, Infinity, -Infinity, Number.MAX_SAFE_INTEGER + 1].map(isValidSampleCount)
+    ).toEqual([false, false, false, false, false, false, false]);
+  });
+
+  it('rejects invalid sample counts at construction and evaluates with one sample', () => {
+    for (const N of [0, -1, 1.5, NaN, Infinity, -Infinity]) {
+      expect(() => new Engine({ N })).toThrow('sample count must be a positive integer');
+    }
+    const result = new Engine({ N: 1 }).evalSheet('1 to 2').lines[0];
+    expect(result.error).toBeUndefined();
+    expect(result.summary?.kind).toBe('dist');
+  });
+});
 
 // §1.8 golden examples. Statistical lines use a larger N for tighter bounds;
 // the fixed seed keeps them deterministic (no flakiness).

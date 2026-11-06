@@ -78,6 +78,10 @@ describe('toCsv', () => {
     const row = toCsv(results).split('\r\n')[1];
     expect(row).toBe('1,"q""d",x,"a,b",point,"has ""quote"""');
   });
+  it('quotes bare CR and CRLF inside fields, preserving record boundaries', () => {
+    const csv = toCsv([value(0, 'x', '1', { comment: 'a\rb\r\nc', name: 'a\rb' })]);
+    expect(csv).toBe('line,name,expression,result,kind,note\r\n1,"a\rb",x,1,point,"a\rb\r\nc"');
+  });
   it('reports errors in the kind and note columns', () => {
     const csv = toCsv([errline(0, 'boom', 'kaboom')]);
     expect(csv.split('\r\n')[1]).toBe('1,,boom,,error,kaboom');

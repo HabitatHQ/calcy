@@ -240,15 +240,6 @@ describe('formatSummary — money (auto-detected currency units)', () => {
     );
     expect(out.text).toBe('$100,000.00');
   });
-  it('a pinned k$ rescales and formats as money', () => {
-    // 5,000,000 usd at factor 1000 = 5000 k$ → still $5,000.00 in display
-    const out = formatSummary(
-      { kind: 'point', value: 5e6, dim: usd },
-      { label: 'k$', factor: 1e3 }
-    );
-    expect(Number(out.value)).toBeCloseTo(5000);
-    expect(out.text).toBe('$5,000.00');
-  });
   it('non-currency dimensioned values are unaffected', () => {
     expect(formatSummary({ kind: 'point', value: 3, dim: { length: 1 } }).text).toBe('3 m');
   });

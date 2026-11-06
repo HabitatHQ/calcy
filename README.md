@@ -86,9 +86,14 @@ pnpm cli sheet.calcy -o results.md      # write to a file
 
 Every evaluated line becomes a row (`line, name, expression, result, kind, note`);
 a line that fails to evaluate shows `kind = error` with the message in `note`.
+Markdown output keeps expressions and comments literal, including pipes,
+backslashes, backticks, and inline markup.
 Flags: `-f/--format`, `-o/--output`, `-N/--samples`, `-s/--seed`,
 `-c/--confidence`, `--number-format`. See `pnpm cli --help`. There's a runnable
 sample at [`examples/run.calcy`](examples/run.calcy).
+
+`--samples` must be a positive integer; invalid counts are rejected before
+evaluation. The Settings sampling control uses the same rule.
 
 ## Docs
 
@@ -108,6 +113,8 @@ The in-app cheat sheet (`⌘/`) has click-to-insert examples for every feature.
 - **Notepad** (default on desktop)—code editor + result gutter, per-line copy.
 - **Tape** (touch-friendly)—a running value with stacked operation rows;
   compiles to the same expression the engine evaluates.
+  Tape uses a separate evaluation worker with the same settings, so it does not
+  replace the Notepad inspector's calculation state.
 - **Rate Card**—auto-shown for rates; time-base table + accumulation + growth.
 - **Sensitivity**—which input drives the most output variance.
 - **Sheets**—create / duplicate / rename / search (`⌘K`); auto-persisted.
@@ -164,8 +171,10 @@ Design decisions worth knowing:
   `validateImport` to read the older shape) whenever the envelope changes.
 - **Import merges, it doesn't clobber**—the worker uses `INSERT OR IGNORE`, so
   re-importing a backup keeps existing sheets, units, and settings. The raw
-  `.sqlite` import is the full-replace path. Destructive resets (clear sheets,
-  reset settings, wipe storage) live behind confirms in Settings.
+  `.sqlite` import is the full-replace path: sheets, settings, and custom units
+  take effect immediately, with defaults used for settings absent from the backup.
+  Destructive resets (clear sheets, reset settings, wipe storage) live behind
+  confirms in Settings.
 
 ### Project layout
 
@@ -198,6 +207,34 @@ e.g. unit-conversion round-trips and distribution invariants), and **golden
 tests** that pin worked examples (see the [Reference](src/lib/docs/reference.md)).
 `pnpm mutation` runs Stryker to check the suite actually catches regressions. New
 behaviour should add golden tests in the spec style.
+
+## Calculation boundaries and backups
+
+- Unary math functions and sample reducers take one value. On a scenario they
+  operate within each labelled cell; use `over <axis>` to collapse an axis.
+  `sum` remains variadic and aligns or crosses scenario axes like `+`.
+- Scenario tables apply a shared trailing unit to each entire cell expression.
+  Multi-axis output identifies every coordinate rather than using flat indexes.
+  Tabs may separate table cells; indentation uses eight-column tab stops.
+- Numeric literals cannot silently discard decimal/exponent suffixes. `2e3` is
+  scientific notation; `2e` is multiplication by Euler's constant. Powers bind
+  before unary signs (`-2^2 = -4`).
+- Scaled currency denominations keep their labels (`100 cents`, `50 k$`) rather
+  than displaying a rescaled amount with a misleading base-currency symbol.
+- Unit and bridge scales must be finite and positive. Settings and backup
+  imports validate the complete custom-unit dependency set before persisting it.
+- Distribution bounds must be ordered. Invalid sample-domain operations report
+  an error rather than dropping draws or displaying NaN statistics.
+- Confidence levels are strictly between 0 and 1; calendar lengths are finite
+  positive days. Invalid live edits leave the previous setting unchanged.
+- A `correlate:` block needs more samples than variables for its rank transform;
+  insufficient sampling gets a distinct error, not a false target-matrix error.
+- Ranges require finite bounds and a positive finite step, are capped at
+  1,000,000 entries, and reject steps that cannot advance at the chosen magnitude.
+- SQLite export saves pending edits before downloading the database and stops if
+  that save fails. Imports validate a scratch copy before replacing live data,
+  recover the previous database if replacement fails, and adopt a fresh sheet
+  when an imported database is empty. JSON merges are atomic.
 
 ## Privacy
 

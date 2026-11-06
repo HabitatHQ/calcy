@@ -153,9 +153,9 @@ function persistLayout() {
 
 	{#if c.ephemeral}
 		<div class="ephemeral-banner" role="status">
-			⚠ calcy is already open in another tab, which owns your saved sheets.
-			<strong>Changes in this tab won’t be saved.</strong> Close the other tabs and reload to
-			save here.
+			⚠ On-device storage is unavailable—another tab may own it, or storage could not be reopened.
+			<strong>Changes in this tab won’t be saved.</strong> Export a backup before closing or
+			reloading, then close other calcy tabs and try again.
 		</div>
 	{/if}
 
@@ -180,7 +180,7 @@ function persistLayout() {
 			{#if c.mode === 'notepad'}
 				<Notepad bind:this={notepad} bind:value={c.body} lines={c.results} selected={c.selected} unitNames={c.unitNames} templates={TEMPLATES} showAst={c.debugAst} dark={c.isDark} onselect={(i) => c.select(i)} onloadtemplate={(t) => c.loadTemplate(t)} onscrolltop={(top) => gutter?.setScrollTop(top)} />
 			{:else if c.engine}
-				<Tape onexpr={(expr, append) => c.applyTapeExpr(expr, append)} engine={c.engine} seed={c.seed} samples={c.samples} numberFormat={c.numberFormat} customUnits={c.customUnits} showAst={c.debugAst} />
+				<Tape onexpr={(expr, append) => c.applyTapeExpr(expr, append)} seed={c.seed} samples={c.samples} numberFormat={c.numberFormat} monthDays={c.monthDays} yearDays={c.yearDays} confidence={c.confidence} customUnits={c.customUnits} showAst={c.debugAst} />
 			{/if}
 		</section>
 

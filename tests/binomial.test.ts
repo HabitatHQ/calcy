@@ -57,4 +57,15 @@ describe('binomial(trials, p)', () => {
     expect(values('binomial(10, -0.1)')[0].error).toMatch(/between 0 and 1|p must/);
     expect(values('binomial(10, 0.2 day)')[0].error).toMatch(/dimensionless|p /);
   });
+
+  it('keeps the analytical mode within the binomial support', () => {
+    expect(exact('mode(binomial(10, 1))')).toBe(10);
+    expect(exact('mode(binomial(0, 1))')).toBe(0);
+  });
+
+  it('preserves unique and tied interior modes', () => {
+    expect(exact('mode(binomial(10, 0.3))')).toBe(3);
+    // (n + 1)p = 5, so either adjacent value is a valid mode.
+    expect([4, 5]).toContain(exact('mode(binomial(9, 0.5))'));
+  });
 });

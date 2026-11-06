@@ -125,6 +125,10 @@ Sign goes before the symbol (`-$42.00`), and `in $` still works for pinning.
 Composite units like `$/hour` are not formatted as money; they're a rate, and the
 breakdown is what you want.
 
+Scaled denominations retain their own label and numeric scale: `100 cents`
+shows `100 cents` (equivalent to `$1`), and `$50000 in k$` shows `50 k$`.
+This also applies to custom units such as `unit lakh = 100000 INR`.
+
 ## Custom currencies & FX
 
 Each currency is its own dimension, so they never mix silently (`$1 + €1` is an
@@ -171,6 +175,10 @@ List-taking reducers are `sum`, `mean`, `min`, `max`. `median`, `sd`, and `p`
 are distribution-only and reject lists with a hint. `discrete()` and `mixture()`
 accept a list as equal-weight scenarios; the `discrete(w1: v1, w2: v2, ...)` form
 is unchanged.
+
+Range bounds and steps must be finite, steps must be positive and advance at
+the chosen floating-point magnitude, and a range may contain at most 1,000,000
+values. Unsupported arithmetic on lists reports an error; reduce a list first.
 
 ## Reducers & math functions
 
@@ -236,6 +244,13 @@ Card** (the value per second / minute / hour / day / week / month / year) with a
 unit sprint = 2 week       # define your own
 unit req = 1               # a dimensionless "count" unit
 ```
+
+`unit`, `bridge`, and `currency` declarations in a sheet apply from their line
+onward and are recomputed on each evaluation. Removing a declaration removes its
+effect. Units added in Settings remain available across sheets.
+Unit and bridge scales must be finite and positive. Settings definitions may
+depend on other saved custom units regardless of their order. A removal or
+backup import that would leave broken dependencies is rejected before saving.
 
 ## Built-in non-SI units
 
@@ -353,7 +368,7 @@ Reserved words — don’t use them as variable names.
 | `exponential(mean)` | Wait time between events; carries the mean’s units. |
 | `poisson(mean)` | Whole count of events at the given mean rate. |
 | `weibull(shape, scale)` | Time-to-failure / reliability; scale carries the units, shape is dimensionless. |
-| `binomial(trials, p)` | Whole count of successes in n independent trials (bounded by n). |
+| `binomial(trials, p)` | Whole count of successes in n independent trials (bounded by n); when p = 1, the value and mode are exactly n. |
 | `discrete(w1: v1, w2: v2, …)` | Weighted scenarios (or equal-weight from a list). |
 | `mixture(d1, d2, …)` | Equal-weight (or weighted) mix of like-dimensioned distributions. |
 | `ci(lo, hi[, level])` | Confidence interval as a function — the `lo to hi` form, with an optional level. |

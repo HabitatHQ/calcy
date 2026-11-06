@@ -17,11 +17,14 @@ describe('parseSettings rejects values that would poison evaluation', () => {
     expect(s.yearDays).toBeUndefined();
     expect(s.samples).toBeUndefined();
   });
-  it('keeps valid values (samples floored to an integer)', () => {
+  it('rejects fractional sample counts without rounding but keeps fractional day counts', () => {
     const s = parseSettings({ monthDays: '30.4', yearDays: '365.25', samples: '10000.9' });
     expect(s.monthDays).toBe(30.4);
     expect(s.yearDays).toBe(365.25);
-    expect(s.samples).toBe(10000);
+    expect(s.samples).toBeUndefined();
+  });
+  it('accepts the smallest valid positive integer sample count', () => {
+    expect(parseSettings({ samples: '1' }).samples).toBe(1);
   });
 });
 

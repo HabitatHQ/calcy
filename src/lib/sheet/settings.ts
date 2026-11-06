@@ -1,7 +1,12 @@
 // Pure parsing of persisted settings strings and custom-unit input. The DB
 // stores everything as strings; these turn them into validated, typed values.
 
-import type { NumberFormat } from '$lib/engine';
+import {
+  isValidCalendarDays,
+  isValidConfidence,
+  isValidSampleCount,
+  type NumberFormat
+} from '$lib/engine';
 
 export interface ParsedSettings {
   monthDays?: number;
@@ -35,19 +40,17 @@ const NUMBER_FORMATS: readonly string[] = ['auto', 'compact', 'newspaper', 'scie
 // `debugAst`, which is always resolved to a boolean.
 export function parseSettings(raw: Record<string, string>): ParsedSettings {
   const out: ParsedSettings = { debugAst: raw.debugAst === 'true' };
-  // A corrupted / hand-edited / truncated value must not poison evaluation: a
-  // non-finite or non-positive day-count or sample-count would flow straight
-  // into the engine (NaN samples break every line), so reject it here and let
-  // the caller keep its default instead of assigning NaN.
+  // Invalid persisted values must not reach evaluation; sample counts are
+  // positive safe integers while calendar-day values may remain fractional.
   const positive = (s: string | undefined): number | undefined => {
     if (!s) return undefined;
     const n = Number(s);
-    return Number.isFinite(n) && n > 0 ? n : undefined;
+    return isValidCalendarDays(n) ? n : undefined;
   };
   out.monthDays = positive(raw.monthDays);
   out.yearDays = positive(raw.yearDays);
-  const samples = positive(raw.samples);
-  if (samples !== undefined) out.samples = Math.floor(samples);
+  const samples = Number(raw.samples);
+  if (isValidSampleCount(samples)) out.samples = samples;
   if (NUMBER_FORMATS.includes(raw.numberFormat))
     out.numberFormat = raw.numberFormat as NumberFormat;
   if (raw.mode === 'tape' || raw.mode === 'notepad') out.mode = raw.mode;
@@ -55,7 +58,7 @@ export function parseSettings(raw: Record<string, string>): ParsedSettings {
     out.theme = raw.theme;
   if (raw.confidence) {
     const c = Number(raw.confidence);
-    if (c > 0 && c < 1) out.confidence = c;
+    if (isValidConfidence(c)) out.confidence = c;
   }
   if (raw.layout) {
     const parts = raw.layout.split(',').map((s) => s.trim());

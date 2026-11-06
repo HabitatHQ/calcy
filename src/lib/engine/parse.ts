@@ -154,21 +154,21 @@ const isNumberWord = (t: Tok | undefined): boolean =>
 // ['one','thousand','two','hundred'] -> 1200, ['twenty','five'] -> 25.
 function combineWords(words: string[]): number {
   let result = 0;
-  let current = 0;
+  let current: number | undefined;
   for (const w of words) {
     if (w in NUM_SCALES) {
       const s = NUM_SCALES[w];
       if (s >= 1000) {
-        result += (current || 1) * s;
-        current = 0;
+        result += (current ?? 1) * s;
+        current = undefined;
       } else {
-        current = (current || 1) * s; // hundred
+        current = (current ?? 1) * s; // hundred
       }
     } else {
-      current += NUM_SMALL[w];
+      current = (current ?? 0) + NUM_SMALL[w];
     }
   }
-  return result + current;
+  return result + (current ?? 0);
 }
 
 // Collapse maximal runs of cardinal words into numeric literals. A `-` between
@@ -341,37 +341,27 @@ function tokenize(src: string): Tok[] {
       }
     }
     if (/[0-9]/.test(c) || (c === '.' && /[0-9]/.test(src[i + 1] ?? ''))) {
-      let s = '';
-      while (i < src.length && /[0-9_.eE]/.test(src[i])) {
-        // allow exponent sign only right after e/E
-        if ((src[i] === 'e' || src[i] === 'E') && (src[i + 1] === '+' || src[i + 1] === '-')) {
-          s += src[i] + src[i + 1];
-          i += 2;
-          continue;
-        }
-        // `..` is the range operator; don't consume a second `.` into a number.
-        if (src[i] === '.' && src[i + 1] === '.') break;
-        if (src[i] !== '_') s += src[i];
-        i++;
+      const match = /^(?:\d[\d_]*(?:\.(?!\.)[\d_]*)?|\.\d[\d_]*)(?:[eE][+-]?\d[\d_]*)?/.exec(
+        src.slice(i)
+      );
+      const s = match?.[0] as string;
+      i += s.length;
+      if ((src[i] === '.' && src[i + 1] !== '.') || (/[eE]/.test(src[i] ?? '') && /[eE]/.test(s))) {
+        throw new Error(`invalid number near '${src.slice(start, i + 2)}'`);
       }
-      // Magnitude suffixes: `k`/`K` → ×10³, `M` → ×10⁶. Consumed only when the
-      // suffix letter stands alone (the next char is not an identifier part),
-      // so a unit that begins with the letter is untouched: `12kg` is 12
-      // kilograms, `12MB` is 12 megabytes. `T` (Tesla) and `B` (byte/bel) are
-      // deliberately excluded, and lowercase `m` is the metre — so `M` (million)
-      // is upper-case only.
+      const numeric = Number(s.replaceAll('_', ''));
       const SUFFIX: Record<string, number> = { k: 1000, K: 1000, M: 1e6 };
       let mult = 1;
       const suf = src[i];
-      const after = src[i + 1];
-      if (suf in SUFFIX && (after === undefined || !isIdentPart(after))) {
+      if (suf in SUFFIX && (src[i + 1] === undefined || !isIdentPart(src[i + 1]))) {
         mult = SUFFIX[suf];
         i++;
       }
+      if (!Number.isFinite(numeric * mult)) throw new Error(`invalid number '${s}'`);
       toks.push({
         kind: 'num',
         value: mult === 1 ? s : s + suf,
-        num: Number.parseFloat(s) * mult,
+        num: numeric * mult,
         start,
         end: i
       });
@@ -838,9 +828,9 @@ class Parser {
   // Juxtaposition (implicit multiplication) binds tighter than * and /, so
   // `60 km / 1 h` is (60 km)/(1 h), not ((60 km)/1) h.
   private parseJuxt(): Node {
-    let left = this.parsePow();
+    let left = this.parseUnary();
     while (this.startsImplicitFactor(this.peek())) {
-      const right = this.parsePow();
+      const right = this.parseUnary();
       left = { type: 'bin', op: '*', left, right };
     }
     return left;
@@ -856,16 +846,9 @@ class Parser {
     return false;
   }
 
-  private parsePow(): Node {
-    const base = this.parseUnary();
-    const t = this.peek();
-    if (t?.kind === 'op' && t.value === '^') {
-      this.next();
-      const exp = this.parsePow(); // right-assoc
-      return { type: 'bin', op: '^', left: base, right: exp };
-    }
-    return base;
-  }
+  // Unary sign binds looser than exponentiation: `-2^2` is `-(2^2)`, while
+  // `2^-2` is `2^(-2)`. The sign therefore sits above `parsePow`, and an
+  // exponent is parsed as a unary expression so it may carry a sign.
   private parseUnary(): Node {
     const t = this.peek();
     if (t?.kind === 'op' && t.value === '-') {
@@ -876,10 +859,26 @@ class Parser {
       this.next();
       return this.parseUnary();
     }
+    return this.parsePow();
+  }
+
+  // Power is right-associative: `2^3^2` is `2^(3^2)`.
+  private parsePow(): Node {
+    const base = this.parseFactor();
+    const t = this.peek();
+    if (t?.kind === 'op' && t.value === '^') {
+      this.next();
+      const exp = this.parseUnary();
+      return { type: 'bin', op: '^', left: base, right: exp };
+    }
+    return base;
+  }
+
+  // A primary, plus the `lo..hi [step k]` range literal. The range only
+  // fires when the base is a bare numeric literal, so `60 km..120 km` is a
+  // parse error rather than a silently-wrong numeric range.
+  private parseFactor(): Node {
     const base = this.parsePrimary();
-    // `lo..hi [step k]` — a stepped range. Only fires when the base is a
-    // bare numeric literal, so `60 km..120 km` is a parse error rather than
-    // a silently-wrong numeric range.
     const next = this.peek();
     if (
       next?.kind === 'op' &&
