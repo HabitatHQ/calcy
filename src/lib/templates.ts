@@ -47,6 +47,43 @@ total   = sum(above) in day
 chance(total < 20 day)        # odds of hitting the deadline`
   },
   {
+    title: 'Uncertainty drivers',
+    blurb: 'inspect which task durations track the total',
+    body: `# Uncertainty drivers—separate estimates are independent draws.
+design  = 2 to 4 day
+backend = 5 to 12 day
+qa      = 3 ± 1 day
+total   = design + backend + qa
+
+# Select total in the Sheet grid to inspect the sensitivity r² ranking.
+# Scores measure association, not additive shares or proof of cause.
+# Reroll (⌘↵ / Ctrl+Enter) and compare; check sampling N and seed in Settings.`
+  },
+  {
+    title: 'Scenario comparison',
+    blurb: 'compare labelled cases, not probability-weighted outcomes',
+    body: `# Scenario comparison—shared case labels align price and demand.
+# Labels describe alternatives, not odds; these cases have no probabilities.
+price  = scenario[case](low: 8, base: 10, high: 14) $
+demand = scenario[case](low: 1200, base: 1000, high: 700)
+revenue = price * demand
+base_revenue = pick(revenue, case = "base")
+best_revenue = max(revenue over case)`
+  },
+  {
+    title: 'Condition on evidence',
+    blurb: 'filter duration draws and compare before and after',
+    body: `# Condition on evidence—suppose we learn the duration is under 8 days.
+duration = 3 to 12 day
+chance(duration < 8 day)
+filtered = (duration given duration < 8 day) in day
+before = mean(duration) in day
+after  = mean(filtered) in day
+
+# given keeps matching draws, then resamples them with replacement.
+# duration stays unchanged: this is not a new prior or a global model update.`
+  },
+  {
     title: 'Traffic forecast',
     blurb: 'an uncertain rate, projected forward',
     body: `# Traffic forecast — requests per second

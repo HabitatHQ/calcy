@@ -230,7 +230,14 @@ function persistLayout() {
 	{#if c.showHelp}
 		<HelpPanel
 			oninsert={insertSnippet}
-			onguide={() => c.openGuide()}
+			onguide={() => {
+				c.closeOverlays();
+				c.openGuide();
+			}}
+			onexamples={() => {
+				c.closeOverlays();
+				c.showTemplates = true;
+			}}
 			onreference={() => c.openReference()}
 			onhowitworks={() => c.openHowItWorks()}
 			onclose={() => (c.showHelp = false)}

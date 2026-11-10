@@ -6,6 +6,7 @@ import { CHEAT_SHEET } from '$lib/cheatsheet';
 let {
 	oninsert,
 	onguide,
+	onexamples,
 	onreference,
 	onhowitworks,
 	onclose,
@@ -13,6 +14,7 @@ let {
 }: {
 	oninsert: (snippet: string) => void;
 	onguide: () => void;
+	onexamples: () => void;
 	onreference: () => void;
 	onhowitworks: () => void;
 	onclose: () => void;
@@ -38,6 +40,19 @@ $effect(() => {
 		<h3>Cheat sheet</h3>
 		<button class="x" onclick={onclose} aria-label="close help">✕</button>
 	</header>
+	<section class="goals" aria-label="modelling goals">
+		<h4>What do you want to explore?</h4>
+		<ul>
+			<li><strong>Compare labelled alternatives:</strong> use scenarios for named cases, not probabilities.</li>
+			<li><strong>Condition on evidence:</strong> <code>given</code> filters matching draws and resamples them; original variables stay unchanged.</li>
+			<li><strong>Inspect uncertainty drivers:</strong> select a sampled result for squared-correlation scores—not causal or additive shares.</li>
+			<li><strong>Reproduce sampled results:</strong> keep the same source, seed and settings for repeatable draws.</li>
+		</ul>
+		<div class="goal-actions">
+			<button class="goal-action" onclick={onguide}>Read the Guide</button>
+			<button class="goal-action" onclick={onexamples}>Open worked examples</button>
+		</div>
+	</section>
 	<p class="hint">Click any example to drop it into your sheet.</p>
 	<div class="groups" bind:this={groupsEl}>
 		{#each GROUPS as g (g.title)}
@@ -69,8 +84,9 @@ $effect(() => {
 		</div>
 	</section>
 	<p class="foot">
-		A range shows the most likely value and the <em>likely range</em> (5th–95th percentile, i.e. 90%
-		confidence). All computation is local — no network.
+		A distribution shows its median and confidence interval (5th–95th percentile at 90% by
+		default). The median is not necessarily the most common value. All computation is local—no
+		network.
 	</p>
 	<nav class="docs" aria-label="documentation">
 		<button class="doclink" onclick={onguide}>Read the Guide</button>
@@ -87,6 +103,8 @@ $effect(() => {
 		right: 0.75rem;
 		top: 3.2rem;
 		width: 380px;
+		max-width: calc(100vw - 1.5rem);
+		box-sizing: border-box;
 		max-height: 78vh;
 		overflow: auto;
 		background: var(--surface-1);
@@ -115,6 +133,44 @@ $effect(() => {
 	}
 	.x:hover {
 		color: var(--text);
+	}
+	.goals {
+		margin: 0.7rem 0;
+		padding-bottom: 0.7rem;
+		border-bottom: 1px solid var(--border);
+	}
+	.goals ul {
+		margin: 0.4rem 0 0.6rem;
+		padding-left: 1.1rem;
+		color: var(--text-muted);
+		font-size: 0.78rem;
+		line-height: 1.45;
+	}
+	.goals li + li {
+		margin-top: 0.3rem;
+	}
+	.goals strong {
+		color: var(--text-2);
+	}
+	.goals code {
+		font-family: var(--font-mono);
+	}
+	.goal-actions {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 0.4rem;
+	}
+	.goal-action {
+		background: var(--surface-2);
+		border: 1px solid var(--border);
+		border-radius: 7px;
+		padding: 0.35rem 0.5rem;
+		color: var(--accent-soft);
+		font-size: 0.78rem;
+		cursor: pointer;
+	}
+	.goal-action:hover {
+		border-color: var(--color-brand);
 	}
 	.hint {
 		margin: 0.3rem 0 0.6rem;
@@ -210,6 +266,7 @@ $effect(() => {
 		display: flex;
 		align-items: center;
 		gap: 0.5rem;
+		flex-wrap: wrap;
 		margin-top: 0.6rem;
 		color: var(--text-faint);
 		font-size: 0.74rem;

@@ -93,7 +93,7 @@ export interface SheetResult {
 
 export interface SensitivityEntry {
   name: string;
-  r2: number; // share of output variance explained (correlation squared)
+  r2: number; // squared Pearson correlation with the selected output
 }
 
 // Σ_{k=0}^{n-1} (1+g)^k — the geometric series for accumulating a rate that

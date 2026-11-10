@@ -30,8 +30,8 @@ function frequency(l: number): string {
 	<div class="dist">
 		{#if line.display?.kind === 'dist'}
 			<p class="plain">
-				Most likely <strong>{withUnit(stat('median'))}</strong>—about
-				<strong>{frequency(level)}</strong> it lands between
+				Median <strong>{withUnit(stat('median'))}</strong>—about
+				<strong>{frequency(level)}</strong> of draws land between
 				<strong>{line.display?.ciLow}</strong> and
 				<strong>{withUnit(line.display?.ciHigh)}</strong>.
 				<span class="lvl" title="'a to b' means a {pct}% confidence interval">{pct}% CI</span>

@@ -3,6 +3,14 @@ time**. Type plain maths and get an answer—and when you're not sure of a numbe
 can type a range and calcy carries that "give or take" all the way through to the
 result.
 
+### Find a path
+
+- [See which inputs track an uncertain result](#interpreting-sensitivity) — start with **Uncertainty drivers**.
+- [Compare named cases](#compare-a-few-scenarios) — open **Scenario comparison**.
+- [Filter estimates using evidence](#conditioning-on-evidence) — open **Condition on evidence**.
+- [Understand sampling and reproducibility](#sampling-not-enumeration).
+
+
 ### Start typing
 
 Each line is its own little calculation:
@@ -47,8 +55,10 @@ visitors = 800 to 1200       # people you expect in a day
 revenue = visitors * $4.50   # if each spends $4.50
 ```
 
-calcy shows a **middle estimate** followed by a low-to-high range in brackets—the value the answer is most likely near, then the span it will probably stay
-within. The uncertainty in `visitors` flows straight through into `revenue`.
+calcy shows a **median** followed by a low-to-high range in brackets—the middle
+value of the simulated results and the span it will probably stay within. It is
+not a claim that the median is the most common or most likely value. The
+uncertainty in `visitors` flows straight through into `revenue`.
 
 A few other friendly ways to say "roughly":
 
@@ -57,6 +67,46 @@ A few other friendly ways to say "roughly":
 - `normal(100, 15)`—a bell curve around 100, give or take 15
 
 Pick whichever matches how you'd say it out loud—no statistics background needed.
+
+<h3 id="interpreting-sensitivity">Interpreting sensitivity</h3>
+
+Select an uncertain result in the Sheet grid to see which named sampled variables
+track its draws most strongly. The list is sorted by squared Pearson correlation
+(r²), with near-zero and unmeasurable entries omitted. It examines all named
+sampled variables of matching length—not just direct inputs—so derived or
+otherwise unrelated variables can appear. Shared sample arrays and variables
+without samples are skipped.
+
+Treat this as a rough linear association ranking, not additive contribution
+percentages or evidence of cause. Correlated inputs can overlap, and nonlinear
+relationships may not rank strongly. **Uncertainty drivers** is a ready-made
+example; reroll to see the ranking vary with the draws.
+
+<h3 id="conditioning-on-evidence">Conditioning on evidence</h3>
+
+`chance(duration < 8 day)` reports the fraction of sampled durations below the
+threshold. `duration given duration < 8 day` filters to those matching draws and
+resamples them with replacement to make a conditioned distribution. Compare
+`mean(duration)` with the filtered mean to see the effect.
+
+This is a conditional view of one value, not a new prior or an update to the
+original variables or full joint model. If no draws satisfy the condition,
+there is no conditioned result. **Condition on evidence** demonstrates the
+pattern.
+
+<h3 id="sampling-not-enumeration">Sampling, not enumeration</h3>
+
+Many uncertain calculations use a finite Monte Carlo sample; they do not
+enumerate every possible outcome. Some supported operations have analytical
+exact paths. Rerolling can change sampled estimates and sensitivity rankings,
+especially with few samples. A fixed seed reproduces the same sheet source with
+the same engine and settings. For reproducibility, keep the source, seed, and
+settings unchanged, including sampling **N**. Changing source, sample count, or
+other settings can change results.
+
+**Scenario comparison** is different: its named cases are explicit scalar
+alternatives carried along a shared axis, not random draws or probability-weighted
+odds. Use `chance(...)` with an uncertain distribution when asking about odds.
 
 ### Ask questions
 
@@ -68,7 +118,7 @@ mean(revenue)               # the average
 median(visitors)            # the middle value
 ```
 
-### Compare a few scenarios
+<h3 id="compare-a-few-scenarios">Compare a few scenarios</h3>
 
 Sometimes you don't have one number—you have a few named cases you want to see
 side by side. `scenario(...)` holds them all at once (the cases are called

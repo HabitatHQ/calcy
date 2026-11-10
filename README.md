@@ -115,12 +115,13 @@ The in-app cheat sheet (`⌘/`) has click-to-insert examples for every feature.
   compiles to the same expression the engine evaluates.
   Tape uses a separate evaluation worker with the same settings, so it does not
   replace the Notepad inspector's calculation state.
-- **Rate Card**—auto-shown for rates; time-base table + accumulation + growth.
-- **Sensitivity**—which input drives the most output variance.
+- **Distribution report**—select an uncertain result to see its interval, full
+  statistics, and sensitivity ranking with interpretation notes.
+- **Sensitivity**—ranked squared correlations with named sampled values, not
+  additive or causal contributions.
 - **Sheets**—create / duplicate / rename / search (`⌘K`); auto-persisted.
-- **Starter templates**—pre-filled sheets for common cases (project estimate,
-  traffic forecast, capacity & headroom, cloud cost, Fermi estimate, events &
-  bursts, carbon footprint).
+- **Starter templates**—pre-filled sheets for common cases plus worked
+  examples for uncertainty drivers, labelled scenarios, and conditioning.
 - **Sharing & export**—share a sheet via URL hash; export the whole store as a
   portable `.sqlite` file.
 

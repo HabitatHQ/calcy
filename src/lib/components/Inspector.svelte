@@ -46,6 +46,11 @@ const selectedLine = $derived(c.selectedLine);
 		{#if c.engine}
 			<Sensitivity engine={c.engine} index={c.selected} tick={c.evalTick} />
 		{/if}
+		<section class="sampling-note" aria-label="sampling details">
+			<p>These draws are a reproducible estimate, not an exhaustive list of outcomes. A seed fixes the draws for this sheet and its current settings; it does not make an estimate exact.</p>
+			<button class="doc-action" onclick={() => { c.closeOverlays(); c.openGuide(); }}>How to read this report</button>
+			<button class="doc-action" onclick={() => c.toggleSettings()}>Sampling &amp; confidence settings</button>
+		</section>
 	{/if}
 	{#if !selectedLine?.isRate && !selectedLine?.isDist && selectedLine?.display}
 		<output class="point"><ResultText display={selectedLine.display} /></output>
@@ -190,6 +195,32 @@ const selectedLine = $derived(c.selectedLine);
 		text-align: left;
 	}
 	.see-examples:hover {
+		color: var(--color-brand);
+		text-decoration: underline;
+	}
+	.sampling-note {
+		border-top: 1px solid var(--border);
+		padding-top: 0.45rem;
+	}
+	.sampling-note p {
+		margin: 0 0 0.4rem;
+		color: var(--text-faint);
+		font-size: 0.72rem;
+		line-height: 1.4;
+	}
+	.doc-action {
+		display: inline-block;
+		margin: 0.1rem 0.45rem 0.1rem 0;
+		padding: 0;
+		border: 0;
+		background: none;
+		color: var(--accent-soft);
+		font: inherit;
+		font-size: 0.74rem;
+		cursor: pointer;
+		text-align: left;
+	}
+	.doc-action:hover {
 		color: var(--color-brand);
 		text-decoration: underline;
 	}

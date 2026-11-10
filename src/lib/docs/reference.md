@@ -83,9 +83,11 @@ chance(800 < demand < 1200) # chained comparison -> odds it lands in a band
 revenue = price * qty where price = 10 to 20, qty = 100   # one-off locals, kept to the line
 ```
 
-- `given` truncates a distribution to the draws satisfying a predicate (unlike
-  `clamp`, which piles mass at the boundary). On a `beta` prior, `given k of n`
-  still means the Bayesian update.
+- `given` truncates a distribution to draws satisfying a predicate, then resamples
+  the retained draws with replacement to restore the configured sample count. It
+  conditions only that expression: it does not change the prior, the original
+  variables, or update a full joint model. If no draws match, evaluation errors.
+  (`beta given k of n` remains the Bayesian update.)
 - Comparisons may be chained when they point the same way (`a < b < c`); mixing
   directions (`a < b > c`) is an error.
 - `where` binds extra locals for a single expression; they don't leak into later
@@ -100,12 +102,19 @@ revenue = price * qty where price = 10 to 20, qty = 100   # one-off locals, kept
 - **Correlation by reuse:** a variable stores its sample array, so `x - x` is
   exactly `0` and `x + x` is `2x` (same draws). Distinct distributions are
   independent.
-- A distribution displays as median + 90% CI `[p5, p95]` with a histogram
-  sparkline; tap to expand a plain-language summary ("most likely ... usually
-  between ..."), with the full percentile table behind a disclosure.
+- A distribution displays as its median + central confidence interval, with a
+  histogram sparkline; tap for the percentile table. The default 90% band is
+  `[p5, p95]`; changing confidence changes the endpoints. The median is the 50th
+  percentile, not necessarily the density peak.
+- **Sensitivity** ranks named sampled variables by squared Pearson correlation
+  with the selected result. Near-zero and unmeasurable entries are omitted;
+  derived variables can appear. Scores overlap, are not additive or causal, and
+  can miss nonlinear relationships. Select a distribution-valued result in the
+  Sheet grid to inspect them.
 - Errors show a plain-language explanation first; the precise developer message
   is on hover.
-- Results are **deterministic** per sheet (seeded RNG); re-roll with `⌘↵`.
+- Results are deterministic for the same sheet source, seed, engine and settings;
+  re-roll with `⌘↵` changes the seed. A fixed seed reproduces draws, not accuracy.
 
 ## Money formatting
 
@@ -225,6 +234,17 @@ chance(total < 20 day)     # P(total < 20 day): a probability in 0...1
 Comparison operators `<` `>` `<=` `>=` produce a dimensionless 0/1 mask;
 `chance(pred)` is its mean. Summing reuses each task's samples, so the total is a
 true Monte-Carlo convolution (correlation preserved), not worst-case stacking.
+
+## Interpreting sensitivity
+
+Select a sampled result in the Sheet grid to rank named sampled variables in the
+last evaluation by squared Pearson correlation (r²). Variables with identical
+sample arrays, mismatched lengths, no samples, or r² below 0.01 are omitted;
+remaining entries sort from highest to lowest. This scans all named sampled
+variables, including derived or unrelated ones—not only direct inputs. Scores
+are overlapping associations, not additive variance shares or causal effects;
+nonlinear relationships can be missed. Sensitivity is an empirical sample
+diagnostic, not a decomposition of the model.
 
 ## Rates & accumulation
 
